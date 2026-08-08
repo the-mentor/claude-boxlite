@@ -112,7 +112,9 @@ claude-boxlite up-dev   # now works from anywhere
 
 `just uninstall` removes the symlink. The wrapper just runs `just --justfile
 /path/to/this/repo/justfile "$@"`, so it behaves identically to running `just` from inside
-the repo, including recipes' relative paths (e.g. `registries.json`).
+the repo, including recipes' relative paths (e.g. `registries.json`). `-c`/`--cwd` uses
+`just`'s `invocation_directory()` rather than `$PWD` so it mounts the directory you actually
+ran the command from, not the repo's own directory.
 
 ## Windows
 

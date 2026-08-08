@@ -110,7 +110,7 @@ up *args=box_name:
       case "$1" in
         --) shift; exec_cmd="$*"; break ;;
         -f|--force) force=1 ;;
-        -c|--cwd) vols="$vols -v $PWD:/workspace" ;;
+        -c|--cwd) vols="$vols -v {{invocation_directory()}}:/workspace" ;;
         -v|--volume) shift; vols="$vols -v $1" ;;
         -*) echo "unknown option: $1" >&2; exit 2 ;;
         *) name="$1" ;;
