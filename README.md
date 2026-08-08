@@ -44,8 +44,10 @@ agentgateway itself is out of scope — the baked config points at
 
 ## Setup
 
-Install the `boxlite` CLI if you don't already have it — this runs BoxLite's official
-[install script](https://sh.boxlite.ai) and installs to `$HOME/.local/bin/boxlite`:
+Install the `boxlite` CLI if you don't already have it — this downloads the release tarball
+directly from [GitHub releases](https://github.com/boxlite-ai/boxlite/releases) (no piped
+install script), verifies its sha256 checksum, and installs to `$HOME/.local/bin/boxlite`
+(override with `BOXLITE_INSTALL_DIR`):
 
 ```bash
 just install-boxlite            # latest release
