@@ -6,4 +6,7 @@ RUN apt update \
 
 RUN npm install -g @anthropic-ai/claude-code
 
+ARG UV_VERSION=0.12.3
+RUN pip install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
+
 WORKDIR /workspace
