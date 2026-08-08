@@ -4,7 +4,7 @@ base_tag   := "claude-boxlite-base"
 custom_tag := "claude-boxlite-custom"
 registry   := "localhost:5000"
 box_name   := "claude-box"
-disk_size  := "20"
+disk_size  := "10"
 compose    := "docker compose -f local-development/registry/docker-compose.yml"
 
 default:
