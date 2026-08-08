@@ -4,6 +4,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends awscli \
  && rm -rf /var/lib/apt/lists/*
 
+# Route git HTTPS auth for github.com through gh's credential helper, so an
+# injected GH_TOKEN/GITHUB_TOKEN enables git clone/push with no login step.
+RUN git config --system credential.'https://github.com'.helper '!gh auth git-credential'
+
 # Mark first-run onboarding complete so the interactive TUI uses
 # CLAUDE_CODE_OAUTH_TOKEN instead of prompting to pick a login method.
 COPY claude.json /root/.claude.json

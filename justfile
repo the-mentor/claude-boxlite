@@ -5,6 +5,9 @@ custom_tag := "claude-boxlite-custom"
 registry   := "localhost:5000"
 box_name   := "claude-box"
 disk_size  := "10"
+# Env vars passed into the box when set (in .env via dotenv-load, or the host
+# env). Unset ones are skipped. Add a var here to make it available in the box.
+passthrough_vars := "CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_MODEL GH_TOKEN GITHUB_TOKEN GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL"
 compose    := "docker compose -f local-development/registry/docker-compose.yml"
 
 default:
@@ -86,13 +89,25 @@ up *args=box_name:
       shift
     done
     [ -n "$force" ] && boxlite rm -f "$name" 2>/dev/null || true
+    envflags=""
+    for v in {{passthrough_vars}}; do
+      eval "val=\${$v:-}"
+      [ -n "$val" ] && envflags="$envflags -e $v"
+    done
     trap 'boxlite rm -f "$name" 2>/dev/null || true' EXIT
-    boxlite run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.json -w /workspace -e CLAUDE_CODE_OAUTH_TOKEN -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- claude
+    boxlite run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- claude
 
 # Open a session in the running box
 # Usage: just shell [box-name]
 shell name=box_name:
-    boxlite exec -it -w /workspace {{name}} -- claude
+    #!/usr/bin/env sh
+    set -eu
+    envflags=""
+    for v in {{passthrough_vars}}; do
+      eval "val=\${$v:-}"
+      [ -n "$val" ] && envflags="$envflags -e $v"
+    done
+    boxlite exec -it -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{name}} -- claude
 
 # Stop and remove the box
 # Usage: just down [box-name]
