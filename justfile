@@ -199,17 +199,28 @@ up *args=box_name:
     trap 'boxlite rm -f "$name" 2>/dev/null || true' EXIT
     boxlite run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- $exec_cmd
 
-# Open a session in the running box
-# Usage: just shell [box-name]
-shell name=box_name:
+# Open a session in the running box.
+# Pass -- <cmd> to override the executable launched in the box (default: claude).
+# Usage: just shell [box-name] [-- cmd...]
+shell *args=box_name:
     #!/usr/bin/env sh
     set -eu
+    set -- {{args}}
+    name={{box_name}}; exec_cmd="claude"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --) shift; exec_cmd="$*"; break ;;
+        -*) echo "unknown option: $1" >&2; exit 2 ;;
+        *) name="$1" ;;
+      esac
+      shift
+    done
     envflags=""
     for v in {{passthrough_vars}}; do
       eval "val=\${$v:-}"
       [ -n "$val" ] && envflags="$envflags -e $v"
     done
-    boxlite exec -it -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{name}} -- claude
+    boxlite exec -it -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" "$name" -- $exec_cmd
 
 # Stop and remove the box
 # Usage: just down [box-name]
