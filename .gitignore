@@ -1,4 +1,5 @@
 .env
+registries.local.json
 
 # Superpowers process artifacts (specs, plans, notes) — kept local, not part of the deliverable
 docs/superpowers/

@@ -18,8 +18,11 @@ agentgateway itself is out of scope — the baked config points at
   directory there clobbers no config.
 - **Image handoff via a local registry.** BoxLite does not read Docker's local image
   store, so the custom image is pushed to a local `registry:2` (managed by docker compose
-  under `local-development/registry/`) and BoxLite pulls it from there. `registries.json`
-  tells BoxLite to use that registry over plain HTTP.
+  under `local-development/registry/`) and BoxLite pulls it from there. BoxLite is actually
+  pointed at `registries.local.json` (gitignored), auto-created from the tracked
+  `registries.json` template the first time you run `just up`/`up-dev`, so it's safe to add
+  authenticated registries (e.g. ECR via `just registry-login`, see below) locally without
+  ever touching the tracked file.
 - **Credentials.** Secrets are read from a gitignored `.env` and passed to the box at run
   time via env-var injection (BoxLite's official credential mechanism) — never baked into
   an image. A known set of vars is forwarded when set (see `passthrough_vars` in the
@@ -50,6 +53,17 @@ cp .env.example .env
 # Optional GitHub: set GH_TOKEN=... (a PAT) to enable gh + git over HTTPS
 # Optional git identity: GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL
 ```
+
+Copy the registries template the same way (or let `just up`/`up-dev` create it for you on first
+run):
+
+```bash
+cp registries.json registries.local.json
+```
+
+`registries.local.json` is gitignored — it's the file BoxLite's `--config` actually reads, so
+it's where `just registry-login` (see below) writes credentials for authenticated registries
+like ECR, without ever touching the tracked `registries.json`.
 
 ## Usage
 

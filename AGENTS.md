@@ -19,6 +19,7 @@ just build              # start the local registry, build base + custom images, 
 just shell              # open a session in the running box
 just down               # stop and remove the box
 just registry-up/down   # manage the local docker-compose registry directly
+just registry-login     # log in to an authenticated registry (e.g. ECR), see below
 ```
 
 `up`/`up-dev` take an optional box name (default `claude-box`) and flags: `-f`/`--force`
@@ -39,8 +40,11 @@ booting a box (`just up-dev`).
   baked into `/workspace`, so mounting a host directory there clobbers no config.
 - **Image handoff via a local registry.** BoxLite does not read Docker's local image store, so
   `just build-image` pushes the custom image to a local `registry:2` (started by
-  `local-development/registry/docker-compose.yml`) and BoxLite pulls from there.
-  `registries.json` tells BoxLite to trust that registry over plain HTTP.
+  `local-development/registry/docker-compose.yml`) and BoxLite pulls from there. BoxLite is
+  pointed at `registries.local.json` (gitignored) via `--config`, not the tracked
+  `registries.json` directly — `just up`/`up-dev` copy the latter to the former on first run
+  (if it doesn't already exist) so it's safe to add per-machine registry credentials to the
+  local copy without touching the tracked template.
   `just clean-cache` drops BoxLite's cached tag→digest row for the custom image (and sweeps
   orphaned blobs) so a rebuilt `:latest` is actually re-pulled instead of served from cache —
   see the comment above the `clean-cache` recipe in the `justfile` for why disk-images are
@@ -54,6 +58,17 @@ booting a box (`just up-dev`).
 - **GitHub auth.** `custom/Dockerfile` configures git's `credential.https://github.com.helper`
   to `gh auth git-credential`, so an injected `GH_TOKEN`/`GITHUB_TOKEN` authenticates both the
   `gh` CLI and `git clone`/`push` over HTTPS with no separate login step.
+- **Authenticated registries (e.g. ECR).** BoxLite reads registry credentials from a config
+  file, not a Docker-style credential store, so there's no `docker login` equivalent built in.
+  `scripts/registry-login.py` fills that gap: piped a password on stdin (mirroring
+  `docker login --username ... --password-stdin ...`), it adds or updates the `--registry
+  <host>`'s `auth` entry in `registries.local.json` (gitignored — never commit live
+  credentials) instead of the tracked `registries.json`, which `just up`/`up-dev` already pass
+  as `--config` (see above).
+  Because BoxLite caches pulled images by tag→digest and never re-hits the registry for a
+  cached tag, a short-lived credential (ECR tokens last 12h) only needs to be fresh at pull
+  time — re-run `just registry-login` before pulls that will actually hit the registry (first
+  pull, a new tag, or after `just clean-cache`).
 
 ## Commit and PR titles
 

@@ -21,6 +21,12 @@ registry-up:
 registry-down:
     {{compose}} down
 
+# Log in to an authenticated image registry (e.g. ECR) and store credentials in
+# registries.local.json (gitignored). Mirrors `docker login`'s interface.
+# Usage: aws ecr get-login-password --region <region> | just registry-login --registry <host> --username AWS --password-stdin
+registry-login *args:
+    ./scripts/registry-login.py {{args}}
+
 build-base:
     docker build -t {{base_tag}} base/
 
@@ -91,13 +97,14 @@ up *args=box_name:
       shift
     done
     [ -n "$force" ] && boxlite rm -f "$name" 2>/dev/null || true
+    [ -f registries.local.json ] || cp registries.json registries.local.json
     envflags=""
     for v in {{passthrough_vars}}; do
       eval "val=\${$v:-}"
       [ -n "$val" ] && envflags="$envflags -e $v"
     done
     trap 'boxlite rm -f "$name" 2>/dev/null || true' EXIT
-    boxlite run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- $exec_cmd
+    boxlite run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- $exec_cmd
 
 # Open a session in the running box
 # Usage: just shell [box-name]
