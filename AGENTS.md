@@ -54,3 +54,11 @@ booting a box (`just up-dev`).
 - **GitHub auth.** `custom/Dockerfile` configures git's `credential.https://github.com.helper`
   to `gh auth git-credential`, so an injected `GH_TOKEN`/`GITHUB_TOKEN` authenticates both the
   `gh` CLI and `git clone`/`push` over HTTPS with no separate login step.
+
+## Commit and PR titles
+
+Prefix every commit message and pull request title with a
+[Conventional Commits](https://www.conventionalcommits.org/) type, e.g. `feat:`, `fix:`,
+`docs:`, `chore:`, `refactor:`. This is what "semantic versioning" naming means in this repo —
+the prefix communicates the kind of change, it does not require bumping a version number by
+hand.
