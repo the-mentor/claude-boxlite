@@ -139,25 +139,30 @@ build: build-image
 clean-cache:
     #!/usr/bin/env sh
     set -eu
-    home="${BOXLITE_HOME:-$HOME/.boxlite}"
-    db="$home/db/boxlite.db"
-    img="$home/images"
     command -v sqlite3 >/dev/null 2>&1 || { echo "clean-cache: sqlite3 not found; skipping" >&2; exit 0; }
-    [ -f "$db" ] || { echo "clean-cache: no boxlite db at $db; skipping" >&2; exit 0; }
-    # Drop the custom tag so the next `boxlite run` re-pulls the pushed image.
-    sqlite3 "$db" "DELETE FROM image_index WHERE reference='{{registry}}/library/{{custom_tag}}:latest';"
-    # Blobs still referenced by any remaining image (filename form: sha256-...).
-    keep="$(mktemp)"
-    { sqlite3 "$db" "SELECT manifest_digest FROM image_index;"
-      sqlite3 "$db" "SELECT config_digest FROM image_index;"
-      sqlite3 "$db" "SELECT value FROM image_index, json_each(layers);"
-    } | tr ':' '-' | sort -u > "$keep"
-    for f in "$img"/manifests/* "$img"/configs/* "$img"/layers/* "$img"/extracted/*; do
-      [ -e "$f" ] || continue
-      key="$(basename "$f" | sed 's/\.json$//; s/\.tar\.gz$//')"
-      grep -qx "$key" "$keep" || rm -rf "$f"
+    root="${BOXLITE_HOME:-$HOME/.boxlite}/boxes"
+    [ -d "$root" ] || { echo "clean-cache: no box homes under $root; skipping" >&2; exit 0; }
+    for dir in "$root"/*/; do
+      [ -d "$dir" ] || continue
+      home="${dir%/}"
+      db="$home/db/boxlite.db"
+      img="$home/images"
+      [ -f "$db" ] || continue
+      # Drop the custom tag so the next `boxlite run` re-pulls the pushed image.
+      sqlite3 "$db" "DELETE FROM image_index WHERE reference='{{registry}}/library/{{custom_tag}}:latest';"
+      # Blobs still referenced by any remaining image (filename form: sha256-...).
+      keep="$(mktemp)"
+      { sqlite3 "$db" "SELECT manifest_digest FROM image_index;"
+        sqlite3 "$db" "SELECT config_digest FROM image_index;"
+        sqlite3 "$db" "SELECT value FROM image_index, json_each(layers);"
+      } | tr ':' '-' | sort -u > "$keep"
+      for f in "$img"/manifests/* "$img"/configs/* "$img"/layers/* "$img"/extracted/*; do
+        [ -e "$f" ] || continue
+        key="$(basename "$f" | sed 's/\.json$//; s/\.tar\.gz$//')"
+        grep -qx "$key" "$keep" || rm -rf "$f"
+      done
+      rm -f "$keep"
     done
-    rm -f "$keep"
 
 # Build images, then boot the box and launch Claude Code.
 # Pass -f/--force to replace an existing box of the same name.
@@ -171,6 +176,16 @@ up-dev *args=box_name: build (up args)
 # Pass -e/--env KEY=VALUE (repeatable) to inject an extra environment variable into the box.
 # Pass -- <cmd> to override the executable launched in the box (default: claude).
 # Usage: just up [box-name] [-f|--force] [-c|--cwd] [-v host:box ...] [-e KEY=VALUE ...] [-- cmd...]
+#
+# Each box name gets its own BOXLITE_HOME (${BOXLITE_HOME:-$HOME/.boxlite}/boxes/<name>).
+# boxlite takes an exclusive lock on the whole BOXLITE_HOME directory for as long as a
+# `boxlite run`/`exec` process is attached to it (not just on the one box), so two boxes
+# sharing a home can't run at once. Splitting the home per box name is what lets
+# `just up box-a` and `just up box-b` run concurrently. (A shared `boxlite serve` daemon
+# would avoid the per-process lock entirely, but its REST API doesn't yet forward
+# `-v`/`-c` bind mounts to the box - boxlite-ai/boxlite#942 - so it can't replace this
+# yet.) Each box name pays for its own image cache under its home dir; `just clean-cache`
+# sweeps all of them.
 up *args=box_name:
     #!/usr/bin/env sh
     set -eu
@@ -188,7 +203,8 @@ up *args=box_name:
       esac
       shift
     done
-    [ -n "$force" ] && boxlite rm -f "$name" 2>/dev/null || true
+    home="${BOXLITE_HOME:-$HOME/.boxlite}/boxes/$name"
+    [ -n "$force" ] && boxlite --home "$home" rm -f "$name" 2>/dev/null || true
     [ -f registries.local.json ] || cp registries.json registries.local.json
     envflags=""
     for v in {{passthrough_vars}}; do
@@ -196,16 +212,28 @@ up *args=box_name:
       [ -n "$val" ] && envflags="$envflags -e $v"
     done
     envflags="$envflags$extra_envflags"
-    trap 'boxlite rm -f "$name" 2>/dev/null || true' EXIT
-    boxlite run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- $exec_cmd
+    trap 'boxlite --home "$home" rm -f "$name" 2>/dev/null || true' EXIT
+    boxlite --home "$home" run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- $exec_cmd
 
-# List running boxes.
+# List running boxes across every box-name home under ${BOXLITE_HOME:-$HOME/.boxlite}/boxes.
 # Usage: just list [args...]
 list *args:
-    boxlite list {{args}}
+    #!/usr/bin/env sh
+    set -eu
+    root="${BOXLITE_HOME:-$HOME/.boxlite}/boxes"
+    [ -d "$root" ] || exit 0
+    for dir in "$root"/*/; do
+      [ -d "$dir" ] || continue
+      echo "== $(basename "$dir") =="
+      boxlite --home "$dir" list {{args}}
+    done
 
 # Open a session in the running box.
 # Pass -- <cmd> to override the executable launched in the box (default: claude).
+# Note: `boxlite exec` also opens its own local runtime and takes the same per-home lock
+# as `boxlite run`, so this only succeeds once that lock is free - i.e. once the `just up`
+# session for this box has exited (this was already true before per-box homes; it's a
+# limitation of the boxlite CLI's process model, not something this recipe adds).
 # Usage: just shell [box-name] [-- cmd...]
 shell *args=box_name:
     #!/usr/bin/env sh
@@ -220,15 +248,19 @@ shell *args=box_name:
       esac
       shift
     done
+    home="${BOXLITE_HOME:-$HOME/.boxlite}/boxes/$name"
     envflags=""
     for v in {{passthrough_vars}}; do
       eval "val=\${$v:-}"
       [ -n "$val" ] && envflags="$envflags -e $v"
     done
-    boxlite exec -it -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" "$name" -- $exec_cmd
+    boxlite --home "$home" exec -it -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" "$name" -- $exec_cmd
 
 # Stop and remove the box
 # Usage: just down [box-name]
 down name=box_name:
-    -boxlite stop {{name}}
-    -boxlite rm {{name}}
+    #!/usr/bin/env sh
+    set -eu
+    home="${BOXLITE_HOME:-$HOME/.boxlite}/boxes/{{name}}"
+    boxlite --home "$home" stop {{name}} || true
+    boxlite --home "$home" rm {{name}} || true

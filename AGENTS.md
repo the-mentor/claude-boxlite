@@ -17,7 +17,7 @@ just up-dev            # build images (base + custom, pushed to local registry),
 just up                # boot the box without rebuilding (images must already be built)
 just build              # start the local registry, build base + custom images, push custom
 just shell              # open a session in the running box
-just list               # list running boxes (forwards any args to `boxlite list`)
+just list               # list running boxes across every box name (see below), forwarding args to `boxlite list`
 just down               # stop and remove the box
 just registry-up/down   # manage the local docker-compose registry directly
 just registry-login     # log in to an authenticated registry (e.g. ECR), see below
@@ -43,6 +43,25 @@ uninstall` removes the symlink.
 
 There is no test suite or linter in this repo; verification is building the images and
 booting a box (`just up-dev`).
+
+## Running multiple boxes at once
+
+Each box name gets its own `BOXLITE_HOME`
+(`${BOXLITE_HOME:-$HOME/.boxlite}/boxes/<name>`), passed to every `boxlite` invocation via
+`--home`. BoxLite takes an exclusive filesystem lock on the whole `BOXLITE_HOME` directory
+for as long as a `boxlite run`/`exec` process is attached to it — not just on the one box —
+so two boxes sharing a home can't run concurrently (`Failed to acquire runtime lock ...
+Another BoxliteRuntime is already using directory`). Splitting the home per box name is what
+lets `just up box-a` and `just up box-b` run at the same time from separate terminals. This
+also means `just shell <name>` only succeeds once the `just up <name>` session for that same
+box has exited — both commands open their own local runtime and take the same per-home lock,
+so a box can only be attached from one CLI process at a time; that's a limitation of
+BoxLite's CLI process model, not something specific to this repo. `just list` and `just
+clean-cache` iterate over every `boxes/*` home to cover all box names. A shared `boxlite
+serve` daemon would sidestep the per-process lock entirely (many boxes, one runtime, one
+lock), but its REST API doesn't yet forward `-v`/`-c` bind mounts into the box
+(boxlite-ai/boxlite#942), which this repo depends on for mounting the host workspace — so
+that's not viable until upstream lands it.
 
 ## Architecture
 
