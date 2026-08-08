@@ -4,10 +4,10 @@ a BoxLite --config file for authenticated registries (e.g. ECR) that stays
 out of the repo. Mirrors `docker login`'s interface:
 
     aws ecr get-login-password --region us-east-1 \\
-      | scripts/registry-login.py --username AWS --password-stdin \\
-          123456789012.dkr.ecr.us-east-1.amazonaws.com
+      | scripts/registry-login.py --registry 123456789012.dkr.ecr.us-east-1.amazonaws.com \\
+          --username AWS --password-stdin
 
-The password is read from stdin. If the host is already present in the
+The password is read from stdin. If the registry is already present in the
 config file, its auth block is updated in place; otherwise a new entry is
 appended. A missing or empty config file is treated as {"image_registries": []}.
 """
@@ -23,7 +23,9 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "host", help="registry host, e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com"
+        "--registry",
+        required=True,
+        help="registry host, e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com",
     )
     parser.add_argument("--username", required=True)
     parser.add_argument(
@@ -59,16 +61,16 @@ def main():
 
     auth = {"type": "basic", "username": args.username, "password": password}
     for entry in registries:
-        if isinstance(entry, dict) and entry.get("host") == args.host:
+        if isinstance(entry, dict) and entry.get("host") == args.registry:
             entry["auth"] = auth
             break
     else:
-        registries.append({"host": args.host, "transport": "https", "auth": auth})
+        registries.append({"host": args.registry, "transport": "https", "auth": auth})
 
     config_path.write_text(json.dumps(data, indent=2) + "\n")
     config_path.chmod(0o600)
 
-    print(f"registry-login: wrote credentials for {args.host} to {config_path}", file=sys.stderr)
+    print(f"registry-login: wrote credentials for {args.registry} to {config_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

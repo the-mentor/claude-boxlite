@@ -23,7 +23,7 @@ registry-down:
 
 # Log in to an authenticated image registry (e.g. ECR) and store credentials in
 # registries.local.json (gitignored). Mirrors `docker login`'s interface.
-# Usage: aws ecr get-login-password --region <region> | just registry-login --username AWS --password-stdin <host>
+# Usage: aws ecr get-login-password --region <region> | just registry-login --registry <host> --username AWS --password-stdin
 registry-login *args:
     ./scripts/registry-login.py {{args}}
 
