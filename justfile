@@ -13,6 +13,19 @@ compose    := "docker compose -f local-development/registry/docker-compose.yml"
 default:
     @just --list
 
+# Install the boxlite CLI itself (a prerequisite for this repo) via the official
+# install script. Installs the latest release by default; pass a version (e.g.
+# v0.9.4) to pin.
+# Usage: just install-boxlite [version]
+install-boxlite version="":
+    #!/usr/bin/env sh
+    set -eu
+    if [ -n "{{version}}" ]; then
+      curl -fsSL https://sh.boxlite.ai | BOXLITE_VERSION={{version}} sh
+    else
+      curl -fsSL https://sh.boxlite.ai | sh
+    fi
+
 # Symlink the claude-boxlite wrapper (bin/claude-boxlite) onto PATH so
 # `claude-boxlite up-dev` etc. work from any directory. Installs into
 # ~/bin by default; pass a directory to install elsewhere.
