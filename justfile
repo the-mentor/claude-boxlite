@@ -15,9 +15,9 @@ default:
 
 # Symlink the claude-boxlite wrapper (bin/claude-boxlite) onto PATH so
 # `claude-boxlite up-dev` etc. work from any directory. Installs into
-# ~/.local/bin by default; pass a directory to install elsewhere.
+# ~/bin by default; pass a directory to install elsewhere.
 # Usage: just install [dir]
-install dir=(env_var('HOME') + "/.local/bin"):
+install dir=(env_var('HOME') + "/bin"):
     #!/usr/bin/env sh
     set -eu
     mkdir -p "{{dir}}"
@@ -31,7 +31,7 @@ install dir=(env_var('HOME') + "/.local/bin"):
 
 # Remove the symlink installed by `just install`.
 # Usage: just uninstall [dir]
-uninstall dir=(env_var('HOME') + "/.local/bin"):
+uninstall dir=(env_var('HOME') + "/bin"):
     rm -f "{{dir}}/claude-boxlite"
 
 # Start the local image registry (docker compose)

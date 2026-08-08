@@ -31,7 +31,7 @@ executable launched in the box; defaults to `claude`, e.g. `just up -- bash`).
 `just` only looks for a justfile in the current or a parent directory, so these recipes only
 work from inside the repo by default. `just install` symlinks `bin/claude-boxlite` — a
 wrapper that runs `just --justfile <repo>/justfile "$@"` — onto `PATH` (default
-`~/.local/bin`, override with `just install <dir>`), so `claude-boxlite up-dev` works from
+`~/bin`, override with `just install <dir>`), so `claude-boxlite up-dev` works from
 anywhere. `just` sets the working directory to the justfile's own directory when invoked with
 `--justfile`, so recipes' relative paths (`registries.local.json`,
 `local-development/registry/docker-compose.yml`) resolve correctly either way. `just

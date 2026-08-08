@@ -106,7 +106,7 @@ commands only work from inside this repo. To run them from any directory, instal
 `claude-boxlite` wrapper onto your `PATH`:
 
 ```bash
-just install            # symlinks bin/claude-boxlite into ~/.local/bin (pass a dir to override)
+just install            # symlinks bin/claude-boxlite into ~/bin (pass a dir to override)
 claude-boxlite up-dev   # now works from anywhere
 ```
 
