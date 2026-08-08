@@ -13,7 +13,9 @@ agentgateway itself is out of scope — the baked config points at
 
 - **Two-layer image.** `base/` builds `claude-boxlite-base` (Debian + Node 20 + Claude
   Code) — slow, rebuilt rarely. `custom/` layers `claude-boxlite-custom` on top, baking
-  `custom/mcp.json` in as `/workspace/.mcp.json`.
+  `custom/claude.json` in as `/root/.claude.json` (theme, onboarding, and a user-scoped
+  `agentgateway` MCP server). Nothing is baked into `/workspace`, so mounting a host
+  directory there clobbers no config.
 - **Image handoff via a local registry.** BoxLite does not read Docker's local image
   store, so the custom image is pushed to a local `registry:2` (managed by docker compose
   under `local-development/registry/`) and BoxLite pulls it from there. `registries.json`
@@ -49,8 +51,9 @@ just down              # stop and remove the box
 
 Use `just up-dev` the first time (or after changing the image); use `just up` for a fast
 boot once the images are built. Both run Claude Code interactively inside the box, so they
-need a valid `CLAUDE_CODE_OAUTH_TOKEN` in `.env`. Once inside, `.mcp.json` is already
-present at `/workspace/.mcp.json`, pointing Claude Code at the host gateway.
+need a valid `CLAUDE_CODE_OAUTH_TOKEN` in `.env`. The `agentgateway` MCP server is
+configured user-scoped in `/root/.claude.json`, so Claude Code points at the host gateway
+in any project — including a mounted host directory.
 
 `up`, `up-dev`, `shell`, and `down` take an optional box name (default `claude-box`), so you
 can run several boxes side by side. `up`/`up-dev` also accept `-f`/`--force` to replace an
@@ -59,9 +62,13 @@ existing box of the same name (without it, a name collision errors out):
 ```bash
 just up-dev my-box     # build + boot a box named "my-box"
 just up my-box -f      # re-boot it, replacing the running box
+just up --cwd          # boot with the host current directory mounted at /workspace
 just shell my-box      # open a session in it
 just down my-box       # tear it down
 ```
+
+`up`/`up-dev` also accept `-c`/`--cwd` (mount the host current directory onto `/workspace`)
+and `-v host:box` (mount an arbitrary host folder, repeatable).
 
 Other recipes: `just registry-up` / `just registry-down` manage the local registry
 directly; `just --list` shows everything.
