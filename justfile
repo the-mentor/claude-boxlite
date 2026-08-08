@@ -16,14 +16,14 @@ default:
 # Install the boxlite CLI itself (a prerequisite for this repo) by downloading
 # the release tarball directly from GitHub (no curl|sh pipe) and verifying its
 # sha256 checksum before installing. Installs the latest release by default;
-# pass a version (e.g. v0.9.4) to pin. Installs to $HOME/.local/bin/boxlite
-# (override with BOXLITE_INSTALL_DIR).
-# Usage: just install-boxlite [version]
-install-boxlite version="":
+# pass a version (e.g. v0.9.4) to pin. Installs into ~/bin by default; pass a
+# directory to install elsewhere.
+# Usage: just install-boxlite [version] [dir]
+install-boxlite version="" dir=(env_var('HOME') + "/bin"):
     #!/usr/bin/env sh
     set -eu
     repo="boxlite-ai/boxlite"
-    install_dir="${BOXLITE_INSTALL_DIR:-$HOME/.local/bin}"
+    install_dir="{{dir}}"
 
     case "$(uname -s)-$(uname -m)" in
       Darwin-arm64) target="aarch64-apple-darwin" ;;
@@ -76,6 +76,11 @@ install-boxlite version="":
     tar --no-same-owner -xzf "${tmpdir}/${archive}" -C "$tmpdir" boxlite
     install -m 0755 "${tmpdir}/boxlite" "${install_dir}/boxlite"
     echo "Installed ${install_dir}/boxlite (${version})" >&2
+    case ":$PATH:" in
+      *":${install_dir}:"*) : ;;
+      *) echo "Note: ${install_dir} is not on your PATH. Add this to your shell rc file:" >&2
+         echo "  export PATH=\"${install_dir}:\$PATH\"" >&2 ;;
+    esac
 
 # Symlink the claude-boxlite wrapper (bin/claude-boxlite) onto PATH so
 # `claude-boxlite up-dev` etc. work from any directory. Installs into
