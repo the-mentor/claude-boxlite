@@ -16,7 +16,7 @@ default:
 # Install the boxlite CLI itself (a prerequisite for this repo) by downloading
 # the release tarball directly from GitHub (no curl|sh pipe) and verifying its
 # sha256 checksum before installing. Installs the latest release by default;
-# pass a version (e.g. v0.9.4) to pin. Installs into ~/bin by default; pass a
+# pass a version (e.g. v0.9.7) to pin. Installs into ~/bin by default; pass a
 # directory to install elsewhere.
 # Usage: just install-boxlite [version] [dir]
 install-boxlite version="" dir=(env_var('HOME') + "/bin"):
