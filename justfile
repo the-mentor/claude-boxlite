@@ -72,14 +72,16 @@ up-dev *args=box_name: build (up args)
 # Pass -f/--force to replace an existing box of the same name (boxlite run has no --force).
 # Pass -c/--cwd to mount the host current directory onto /workspace.
 # Pass -v/--volume host:box (repeatable) to mount a host folder into the box.
-# Usage: just up [box-name] [-f|--force] [-c|--cwd] [-v host:box ...]
+# Pass -- <cmd> to override the executable launched in the box (default: claude).
+# Usage: just up [box-name] [-f|--force] [-c|--cwd] [-v host:box ...] [-- cmd...]
 up *args=box_name:
     #!/usr/bin/env sh
     set -eu
     set -- {{args}}
-    name={{box_name}}; force=""; vols=""
+    name={{box_name}}; force=""; vols=""; exec_cmd="claude"
     while [ $# -gt 0 ]; do
       case "$1" in
+        --) shift; exec_cmd="$*"; break ;;
         -f|--force) force=1 ;;
         -c|--cwd) vols="$vols -v $PWD:/workspace" ;;
         -v|--volume) shift; vols="$vols -v $1" ;;
@@ -95,7 +97,7 @@ up *args=box_name:
       [ -n "$val" ] && envflags="$envflags -e $v"
     done
     trap 'boxlite rm -f "$name" 2>/dev/null || true' EXIT
-    boxlite run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- claude
+    boxlite run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- $exec_cmd
 
 # Open a session in the running box
 # Usage: just shell [box-name]
