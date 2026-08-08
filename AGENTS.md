@@ -61,9 +61,10 @@ booting a box (`just up-dev`).
 - **Authenticated registries (e.g. ECR).** BoxLite reads registry credentials from a config
   file, not a Docker-style credential store, so there's no `docker login` equivalent built in.
   `scripts/registry-login.py` fills that gap: piped a password on stdin (mirroring
-  `docker login --username ... --password-stdin ...`), it adds or updates that host's `auth`
-  entry in `registries.local.json` (gitignored — never commit live credentials) instead of the
-  tracked `registries.json`, which `just up`/`up-dev` already pass as `--config` (see above).
+  `docker login --username ... --password-stdin ...`), it adds or updates the `--registry
+  <host>`'s `auth` entry in `registries.local.json` (gitignored — never commit live
+  credentials) instead of the tracked `registries.json`, which `just up`/`up-dev` already pass
+  as `--config` (see above).
   Because BoxLite caches pulled images by tag→digest and never re-hits the registry for a
   cached tag, a short-lived credential (ECR tokens last 12h) only needs to be fresh at pull
   time — re-run `just registry-login` before pulls that will actually hit the registry (first
