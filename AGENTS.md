@@ -20,12 +20,22 @@ just shell              # open a session in the running box
 just down               # stop and remove the box
 just registry-up/down   # manage the local docker-compose registry directly
 just registry-login     # log in to an authenticated registry (e.g. ECR), see below
+just install/uninstall  # symlink the claude-boxlite wrapper onto PATH (see below)
 ```
 
 `up`/`up-dev` take an optional box name (default `claude-box`) and flags: `-f`/`--force`
 (replace an existing box of the same name), `-c`/`--cwd` (mount host cwd onto `/workspace`),
 `-v host:box` (mount an arbitrary host folder, repeatable), and `-- <cmd>` (override the
 executable launched in the box; defaults to `claude`, e.g. `just up -- bash`).
+
+`just` only looks for a justfile in the current or a parent directory, so these recipes only
+work from inside the repo by default. `just install` symlinks `bin/claude-boxlite` — a
+wrapper that runs `just --justfile <repo>/justfile "$@"` — onto `PATH` (default
+`~/.local/bin`, override with `just install <dir>`), so `claude-boxlite up-dev` works from
+anywhere. `just` sets the working directory to the justfile's own directory when invoked with
+`--justfile`, so recipes' relative paths (`registries.local.json`,
+`local-development/registry/docker-compose.yml`) resolve correctly either way. `just
+uninstall` removes the symlink.
 
 There is no test suite or linter in this repo; verification is building the images and
 booting a box (`just up-dev`).

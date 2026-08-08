@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+# Runs this repo's justfile from any working directory. Install onto PATH
+# with `just install` (see justfile), then run e.g. `claude-boxlite up-dev`
+# from anywhere.
+set -eu
+
+resolve_dir() {
+    target=$1
+    while [ -L "$target" ]; do
+        link_dir=$(CDPATH= cd -- "$(dirname -- "$target")" && pwd)
+        target=$(readlink -- "$target")
+        case $target in
+            /*) ;;
+            *) target="$link_dir/$target" ;;
+        esac
+    done
+    CDPATH= cd -- "$(dirname -- "$target")" && pwd
+}
+
+script_dir=$(resolve_dir "$0")
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+
+exec just --justfile "$repo_root/justfile" "$@"
