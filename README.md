@@ -20,8 +20,17 @@ agentgateway itself is out of scope — the baked config points at
   store, so the custom image is pushed to a local `registry:2` (managed by docker compose
   under `local-development/registry/`) and BoxLite pulls it from there. `registries.json`
   tells BoxLite to use that registry over plain HTTP.
-- **Credentials.** Claude Code's OAuth token is read from a gitignored `.env` and passed
-  to the box at run time — never baked into an image.
+- **Credentials.** Secrets are read from a gitignored `.env` and passed to the box at run
+  time via env-var injection (BoxLite's official credential mechanism) — never baked into
+  an image. A known set of vars is forwarded when set (see `passthrough_vars` in the
+  `justfile`): Claude auth (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, plus optional
+  `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` / `ANTHROPIC_MODEL`), GitHub
+  (`GH_TOKEN`/`GITHUB_TOKEN`), and git identity (`GIT_AUTHOR_*` / `GIT_COMMITTER_*`). Unset
+  vars are skipped.
+- **GitHub.** Setting `GH_TOKEN` (or `GITHUB_TOKEN`) authenticates the `gh` CLI
+  automatically; git is preconfigured to use gh's credential helper, so `git clone`/`push`
+  over HTTPS work too. Commit identity comes from the `GIT_AUTHOR_*` / `GIT_COMMITTER_*`
+  vars.
 
 ## Prerequisites
 
@@ -31,12 +40,15 @@ agentgateway itself is out of scope — the baked config points at
 
 ## Setup
 
-Copy the env template and set your Claude Code OAuth token:
+Copy the env template and set your credentials:
 
 ```bash
 cp .env.example .env
-# get a token with:  claude setup-token
-# then edit .env and set CLAUDE_CODE_OAUTH_TOKEN=...
+# Claude auth — pick ONE:
+#   subscription: get a token with `claude setup-token`, set CLAUDE_CODE_OAUTH_TOKEN=...
+#   API key:      set ANTHROPIC_API_KEY=... (optionally ANTHROPIC_BASE_URL=... for a gateway)
+# Optional GitHub: set GH_TOKEN=... (a PAT) to enable gh + git over HTTPS
+# Optional git identity: GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL
 ```
 
 ## Usage
