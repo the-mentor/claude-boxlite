@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "agentgateway": {
-      "type": "http",
-      "url": "http://host.boxlite.internal:3000/mcp"
-    }
-  }
-}

@@ -4,6 +4,4 @@ FROM claude-boxlite-base
 # CLAUDE_CODE_OAUTH_TOKEN instead of prompting to pick a login method.
 COPY claude.json /root/.claude.json
 
-COPY mcp.json /workspace/.mcp.json
-
 WORKDIR /workspace

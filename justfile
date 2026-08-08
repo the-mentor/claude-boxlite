@@ -62,20 +62,32 @@ clean-cache:
 
 # Build images, then boot the box and launch Claude Code.
 # Pass -f/--force to replace an existing box of the same name.
-# Usage: just up-dev [box-name] [-f|--force]
-up-dev name=box_name force="": build (up name force)
+# Usage: just up-dev [box-name] [-f|--force] [-c|--cwd] [-v host:box ...]
+up-dev *args=box_name: build (up args)
 
 # Boot the box and launch Claude Code (assumes images are already built).
 # Pass -f/--force to replace an existing box of the same name (boxlite run has no --force).
-# Usage: just up [box-name] [-f|--force]
-up name=box_name force="":
+# Pass -c/--cwd to mount the host current directory onto /workspace.
+# Pass -v/--volume host:box (repeatable) to mount a host folder into the box.
+# Usage: just up [box-name] [-f|--force] [-c|--cwd] [-v host:box ...]
+up *args=box_name:
     #!/usr/bin/env sh
-    case "{{force}}" in
-      -f|--force) boxlite rm -f {{name}} 2>/dev/null || true ;;
-      "") ;;
-      *) echo "unknown option: {{force}} (use -f or --force)" >&2; exit 2 ;;
-    esac
-    exec boxlite run -it --name {{name}} --disk-size {{disk_size}} --config registries.json -w /workspace -e CLAUDE_CODE_OAUTH_TOKEN {{custom_tag}} claude
+    set -eu
+    set -- {{args}}
+    name={{box_name}}; force=""; vols=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -f|--force) force=1 ;;
+        -c|--cwd) vols="$vols -v $PWD:/workspace" ;;
+        -v|--volume) shift; vols="$vols -v $1" ;;
+        -*) echo "unknown option: $1" >&2; exit 2 ;;
+        *) name="$1" ;;
+      esac
+      shift
+    done
+    [ -n "$force" ] && boxlite rm -f "$name" 2>/dev/null || true
+    trap 'boxlite rm -f "$name" 2>/dev/null || true' EXIT
+    boxlite run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.json -w /workspace -e CLAUDE_CODE_OAUTH_TOKEN -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- claude
 
 # Open a session in the running box
 # Usage: just shell [box-name]
