@@ -38,10 +38,21 @@ agentgateway itself is out of scope — the baked config points at
 ## Prerequisites
 
 - [`docker`](https://docs.docker.com/get-docker/) with `docker compose`
-- [`boxlite`](https://boxliteai.com) CLI
+- [`boxlite`](https://boxliteai.com) CLI — install the latest into `~/bin` with
+  `just install-boxlite`, or pin a version with `just install-boxlite v0.9.7` (see below)
 - [`just`](https://github.com/casey/just)
 
 ## Setup
+
+Install the `boxlite` CLI if you don't already have it — this downloads the release tarball
+directly from [GitHub releases](https://github.com/boxlite-ai/boxlite/releases) (no piped
+install script), verifies its sha256 checksum, and installs into `~/bin` by default:
+
+```bash
+just install-boxlite                    # latest release, installed to ~/bin
+just install-boxlite v0.9.7             # pin a specific version
+just install-boxlite "" /usr/local/bin  # install to a different directory
+```
 
 Copy the env template and set your credentials:
 
