@@ -93,8 +93,13 @@ just shell my-box      # open a session in it
 just down my-box       # tear it down
 ```
 
-`up`/`up-dev` also accept `-c`/`--cwd` (mount the host current directory onto `/workspace`)
-and `-v host:box` (mount an arbitrary host folder, repeatable).
+`up`/`up-dev` also accept `-c`/`--cwd` (mount the host current directory onto `/workspace`),
+`-v host:box` (mount an arbitrary host folder, repeatable), and `-e KEY=VALUE` (inject an
+extra environment variable into the box, repeatable):
+
+```bash
+just up -e test=1 -e test2=2   # boot with test=1 and test2=2 set in the box
+```
 
 Other recipes: `just registry-up` / `just registry-down` manage the local registry
 directly; `just --list` shows everything.

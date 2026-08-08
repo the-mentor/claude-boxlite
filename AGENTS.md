@@ -25,8 +25,10 @@ just install/uninstall  # symlink the claude-boxlite wrapper onto PATH (see belo
 
 `up`/`up-dev` take an optional box name (default `claude-box`) and flags: `-f`/`--force`
 (replace an existing box of the same name), `-c`/`--cwd` (mount host cwd onto `/workspace`),
-`-v host:box` (mount an arbitrary host folder, repeatable), and `-- <cmd>` (override the
-executable launched in the box; defaults to `claude`, e.g. `just up -- bash`).
+`-v host:box` (mount an arbitrary host folder, repeatable), `-e KEY=VALUE` (inject an extra
+environment variable into the box, repeatable, appended to `envflags` alongside
+`passthrough_vars`), and `-- <cmd>` (override the executable launched in the box; defaults to
+`claude`, e.g. `just up -- bash`).
 
 `just` only looks for a justfile in the current or a parent directory, so these recipes only
 work from inside the repo by default. `just install` symlinks `bin/claude-boxlite` — a

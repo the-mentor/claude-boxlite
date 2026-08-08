@@ -92,26 +92,28 @@ clean-cache:
 
 # Build images, then boot the box and launch Claude Code.
 # Pass -f/--force to replace an existing box of the same name.
-# Usage: just up-dev [box-name] [-f|--force] [-c|--cwd] [-v host:box ...]
+# Usage: just up-dev [box-name] [-f|--force] [-c|--cwd] [-v host:box ...] [-e KEY=VALUE ...]
 up-dev *args=box_name: build (up args)
 
 # Boot the box and launch Claude Code (assumes images are already built).
 # Pass -f/--force to replace an existing box of the same name (boxlite run has no --force).
 # Pass -c/--cwd to mount the host current directory onto /workspace.
 # Pass -v/--volume host:box (repeatable) to mount a host folder into the box.
+# Pass -e/--env KEY=VALUE (repeatable) to inject an extra environment variable into the box.
 # Pass -- <cmd> to override the executable launched in the box (default: claude).
-# Usage: just up [box-name] [-f|--force] [-c|--cwd] [-v host:box ...] [-- cmd...]
+# Usage: just up [box-name] [-f|--force] [-c|--cwd] [-v host:box ...] [-e KEY=VALUE ...] [-- cmd...]
 up *args=box_name:
     #!/usr/bin/env sh
     set -eu
     set -- {{args}}
-    name={{box_name}}; force=""; vols=""; exec_cmd="claude"
+    name={{box_name}}; force=""; vols=""; exec_cmd="claude"; extra_envflags=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --) shift; exec_cmd="$*"; break ;;
         -f|--force) force=1 ;;
         -c|--cwd) vols="$vols -v {{invocation_directory()}}:/workspace" ;;
         -v|--volume) shift; vols="$vols -v $1" ;;
+        -e|--env) shift; extra_envflags="$extra_envflags -e $1" ;;
         -*) echo "unknown option: $1" >&2; exit 2 ;;
         *) name="$1" ;;
       esac
@@ -124,6 +126,7 @@ up *args=box_name:
       eval "val=\${$v:-}"
       [ -n "$val" ] && envflags="$envflags -e $v"
     done
+    envflags="$envflags$extra_envflags"
     trap 'boxlite rm -f "$name" 2>/dev/null || true' EXIT
     boxlite run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- $exec_cmd
 
