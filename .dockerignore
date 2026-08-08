@@ -1,0 +1,49 @@
+# Version control
+.git
+.gitignore
+
+# Dependencies (install these inside the container instead)
+node_modules/
+jspm_packages/
+.venv/
+env/
+venv/
+
+# Build outputs and caches
+dist/
+build/
+.next/
+.nuxt/
+__pycache__/
+*.pyc
+
+# Debugging and logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDEs and OS metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets and local configurations
+.env
+.env.example
+.env.local
+*.pem
+*.key
+
+# Docker files themselves
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# AI
+.claude
+
+# Local Development 
+local-development
+registries.json

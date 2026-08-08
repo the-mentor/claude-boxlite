@@ -1,0 +1,14 @@
+# Local image registry for handing BoxLite the custom image.
+# Start with: docker compose -f local-development/registry/docker-compose.yml up -d
+services:
+  registry:
+    image: registry:2
+    container_name: boxlite-registry
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    volumes:
+      - registry-data:/var/lib/registry
+
+volumes:
+  registry-data:

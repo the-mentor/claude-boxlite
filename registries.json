@@ -1,0 +1,4 @@
+{"image_registries":[
+  {"host":"localhost:5000","transport":"http","skip_verify":true,"search":true},
+  {"host":"docker.io","transport":"https","skip_verify":false,"search":true}
+]}
