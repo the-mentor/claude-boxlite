@@ -17,6 +17,7 @@ just up-dev            # build images (base + custom, pushed to local registry),
 just up                # boot the box without rebuilding (images must already be built)
 just build              # start the local registry, build base + custom images, push custom
 just shell              # open a session in the running box
+just list               # list running boxes (forwards any args to `boxlite list`)
 just down               # stop and remove the box
 just registry-up/down   # manage the local docker-compose registry directly
 just registry-login     # log in to an authenticated registry (e.g. ECR), see below

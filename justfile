@@ -199,6 +199,11 @@ up *args=box_name:
     trap 'boxlite rm -f "$name" 2>/dev/null || true' EXIT
     boxlite run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- $exec_cmd
 
+# List running boxes.
+# Usage: just list [args...]
+list *args:
+    boxlite list {{args}}
+
 # Open a session in the running box.
 # Pass -- <cmd> to override the executable launched in the box (default: claude).
 # Usage: just shell [box-name] [-- cmd...]
