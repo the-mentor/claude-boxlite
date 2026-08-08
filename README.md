@@ -99,6 +99,23 @@ and `-v host:box` (mount an arbitrary host folder, repeatable).
 Other recipes: `just registry-up` / `just registry-down` manage the local registry
 directly; `just --list` shows everything.
 
+### Running from anywhere
+
+`just` only finds a justfile in the current (or a parent) directory, so by default these
+commands only work from inside this repo. To run them from any directory, install the
+`claude-boxlite` wrapper onto your `PATH`:
+
+```bash
+just install            # symlinks bin/claude-boxlite into ~/bin (pass a dir to override)
+claude-boxlite up-dev   # now works from anywhere
+```
+
+`just uninstall` removes the symlink. The wrapper just runs `just --justfile
+/path/to/this/repo/justfile "$@"`, so it behaves identically to running `just` from inside
+the repo, including recipes' relative paths (e.g. `registries.json`). `-c`/`--cwd` uses
+`just`'s `invocation_directory()` rather than `$PWD` so it mounts the directory you actually
+ran the command from, not the repo's own directory.
+
 ## Windows
 
 `just` recipes run under `sh`. On Windows, install Git Bash and add

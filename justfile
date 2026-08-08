@@ -13,6 +13,27 @@ compose    := "docker compose -f local-development/registry/docker-compose.yml"
 default:
     @just --list
 
+# Symlink the claude-boxlite wrapper (bin/claude-boxlite) onto PATH so
+# `claude-boxlite up-dev` etc. work from any directory. Installs into
+# ~/bin by default; pass a directory to install elsewhere.
+# Usage: just install [dir]
+install dir=(env_var('HOME') + "/bin"):
+    #!/usr/bin/env sh
+    set -eu
+    mkdir -p "{{dir}}"
+    ln -sf "{{justfile_directory()}}/bin/claude-boxlite" "{{dir}}/claude-boxlite"
+    echo "Installed {{dir}}/claude-boxlite -> {{justfile_directory()}}/bin/claude-boxlite"
+    case ":$PATH:" in
+      *":{{dir}}:"*) : ;;
+      *) echo "Note: {{dir}} is not on your PATH. Add this to your shell rc file:" >&2
+         echo "  export PATH=\"{{dir}}:\$PATH\"" >&2 ;;
+    esac
+
+# Remove the symlink installed by `just install`.
+# Usage: just uninstall [dir]
+uninstall dir=(env_var('HOME') + "/bin"):
+    rm -f "{{dir}}/claude-boxlite"
+
 # Start the local image registry (docker compose)
 registry-up:
     {{compose}} up -d
@@ -89,7 +110,7 @@ up *args=box_name:
       case "$1" in
         --) shift; exec_cmd="$*"; break ;;
         -f|--force) force=1 ;;
-        -c|--cwd) vols="$vols -v $PWD:/workspace" ;;
+        -c|--cwd) vols="$vols -v {{invocation_directory()}}:/workspace" ;;
         -v|--volume) shift; vols="$vols -v $1" ;;
         -*) echo "unknown option: $1" >&2; exit 2 ;;
         *) name="$1" ;;
