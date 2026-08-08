@@ -83,6 +83,7 @@ just up-dev            # build images (base + custom, pushed to the local regist
 just up                # boot the box without rebuilding (images must already be built)
 just build             # start the local registry, build base + custom images, push custom
 just shell             # open a session in the running box
+just list              # list running boxes
 just down              # stop and remove the box
 ```
 
