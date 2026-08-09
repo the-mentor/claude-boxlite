@@ -5,7 +5,7 @@ services:
     image: registry:2
     container_name: boxlite-registry
     ports:
-      - "5551:5000"
+      - "127.0.0.1:5551:5000"
     restart: unless-stopped
     volumes:
       - registry-data:/var/lib/registry
