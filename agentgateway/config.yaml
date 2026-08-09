@@ -46,3 +46,87 @@ mcp:
         requestHeaderModifier:
           set:
             Authorization: "Bearer $GH_TOKEN"
+
+# LLM routes (Task 2). Schema check (v1.4.1, /tmp/agw-schema.json +
+# schema/config.md rendered from it): top level is `binds[].listeners[].routes[]`,
+# same shape already confirmed valid for `mcp:` targets in Task 1.
+#
+# `policies.ai.routes` and `policies.backendAuth` are each schema-valid in TWO
+# places: at the route level (`routes[].policies.*`) and nested inside the ai
+# backend (`routes[].backends[].ai.policies.*`) — `LocalBackendPolicies` is the
+# same type reused in both spots. The brief's candidate put `ai.routes` under
+# the backend and `backendAuth` on the route; both were verified schema-valid
+# as written, so nothing needed to move. This split also matches agentgateway's
+# own published examples verbatim: the Claude Desktop and Claude Code
+# integration docs (agentgateway.dev/docs/standalone/*/integrations/llm-clients/
+# claude-desktop and .../claude-code, fetched for this task) both nest
+# `policies.ai.routes` under `backends[].ai`. A third-party blog
+# (maniak.io/articles/2026-05-08-claude-codex-passthrough-through-agentgateway)
+# places `backendAuth` as a bare top-level key on the route (sibling of
+# `matches`/`policies`/`backends`) — that key does not exist on `LocalRoute`
+# (`additionalProperties: false`, only name/namespace/ruleName/hostnames/
+# matches/policies/backends) and was NOT followed; `backendAuth` stays inside
+# `policies:` per the schema.
+#
+# NOT confirmed by the schema: `$VAR` expansion of `policies.backendAuth.key`
+# (type `FileOrInline` = `{file: string} | string`, no expansion behavior
+# documented on that type itself). Upstream's own docs demonstrate `$VAR`
+# expansion only for the *shorthand* `llm.models[].params.apiKey` field (e.g.
+# `apiKey: "$ANTHROPIC_API_KEY"` in examples/llm-basic/config.yaml and the
+# Anthropic provider doc) — a different field on a different config shape
+# (`llm:` top-level shorthand, not the `binds:`/`backendAuth` long form used
+# here). Same category of unverified risk Task 1 flagged for the MCP
+# `requestHeaderModifier.set` header value. If the keyed /api route in Task 6
+# gets a 401 with a real key present in .env, check agentgateway's logs for
+# whether it sent the literal string "$ANTHROPIC_API_KEY" instead of expanding
+# it.
+binds:
+  - port: 3001
+    listeners:
+      - routes:
+          # Subscription OAuth. NO credential block — that absence is what makes
+          # this passthrough: Claude Code's own OAuth token and its
+          # anthropic-beta: oauth-2025-04-20 header travel upstream untouched.
+          # Client sets ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/claude
+          - matches:
+              - path:
+                  pathPrefix: /claude
+            policies:
+              urlRewrite:
+                path:
+                  prefix: /
+            backends:
+              - ai:
+                  name: claude-passthrough
+                  provider:
+                    anthropic: {}
+                  policies:
+                    ai:
+                      routes:
+                        /v1/messages: messages
+                        /v1/messages/count_tokens: anthropicTokenCount
+                        '*': passthrough
+
+          # API key. The gateway attaches the real credential; the box sends a
+          # dummy ANTHROPIC_AUTH_TOKEN and never sees the key.
+          # Client sets ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/api
+          - matches:
+              - path:
+                  pathPrefix: /api
+            policies:
+              urlRewrite:
+                path:
+                  prefix: /
+              backendAuth:
+                key: "$ANTHROPIC_API_KEY"
+            backends:
+              - ai:
+                  name: claude-keyed
+                  provider:
+                    anthropic: {}
+                  policies:
+                    ai:
+                      routes:
+                        /v1/messages: messages
+                        /v1/messages/count_tokens: anthropicTokenCount
+                        '*': passthrough
