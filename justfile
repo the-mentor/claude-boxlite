@@ -20,6 +20,7 @@ disk_size  := "10"
 # terminals (iTerm2, WezTerm, Warp) where it works fine outside the box.
 passthrough_vars := "CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_MODEL GH_TOKEN GITHUB_TOKEN GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM KITTY_WINDOW_ID WEZTERM_EXECUTABLE ITERM_SESSION_ID WT_SESSION VTE_VERSION"
 compose    := "docker compose -f local-development/registry/docker-compose.yml"
+gateway    := "docker compose -f agentgateway/docker-compose.yml --env-file .env"
 
 default:
     @just --list
@@ -121,6 +122,19 @@ registry-up:
 # Stop the local image registry
 registry-down:
     {{compose}} down
+
+# Start the host-side agentgateway (docker compose). Long-lived: boxes come and
+# go, this stays up. Not started by `just up`/`up-dev`.
+gateway-up:
+    {{gateway}} up -d
+
+# Stop the host-side agentgateway
+gateway-down:
+    {{gateway}} down
+
+# Follow the agentgateway logs
+gateway-logs:
+    {{gateway}} logs -f
 
 # Log in to an authenticated image registry (e.g. ECR) and store credentials in
 # registries.local.json (gitignored). Mirrors `docker login`'s interface.
