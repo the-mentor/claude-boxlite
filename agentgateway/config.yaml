@@ -56,9 +56,34 @@
 # there. Expansion of a GH_TOKEN reference inside a header value is the same
 # raw-text substitution described in the warning at the top of this file —
 # no longer an open question, confirmed by the round-1 crash-loop.
+#
+# RESOLVED (Task 13): migrated off `binds:` + `mcp.port` onto `gateways:` +
+# top-level `routes:`. `binds` and `mcp.port` are both documented as
+# deprecated in the v1.4.1 schema (`gateways`/`routes` are the recommended
+# replacement) and the admin UI flagged this file for using the legacy form
+# with no `gateways` at all. `gateways` is a map of name -> listener config
+# (port/protocol/tls/listeners); `mcp:` and each top-level `routes[]` entry
+# attach to a named gateway via their own `gateways` field (string or array
+# of strings). Two gateways below carry the same two ports the old `binds`
+# array used — mcp-gateway:3000, llm-gateway:3001 — so the box's baked
+# `http://host.boxlite.internal:3000/mcp` and the `/claude` and `/api`
+# upstream URLs keep working unchanged. Do not reintroduce `binds` or
+# `mcp.port`; this file deliberately uses `gateways` so nobody migrates back.
+
+gateways:
+  mcp-gateway:
+    port: 3000
+    protocol: HTTP
+  llm-gateway:
+    port: 3001
+    protocol: HTTP
 
 mcp:
-  port: 3000
+  # Attaches this MCP config to mcp-gateway (port 3000, see `gateways:`
+  # above). A gateway-attached `mcp:` block is served at `/mcp` and `/sse`
+  # automatically, so the box's baked `http://host.boxlite.internal:3000/mcp`
+  # needs no change here.
+  gateways: mcp-gateway
   targets:
     # GitHub's official MCP server image (ghcr.io/github/github-mcp-server),
     # run as the `github-mcp` sibling compose service in HTTP mode — see
@@ -108,9 +133,15 @@ mcp:
     #   mcp:
     #     host: http://host.docker.internal:8000/mcp
 
-# LLM routes (Task 2). Schema check (v1.4.1, /tmp/agw-schema.json +
-# schema/config.md rendered from it): top level is `binds[].listeners[].routes[]`,
-# same shape already confirmed valid for `mcp:` targets in Task 1.
+# LLM routes (Task 2, re-nested under top-level `routes:` in Task 13).
+# Schema check (v1.4.1, /tmp/agw-schema.json + schema/config.md rendered from
+# it): `routes` is a top-level array of `LocalAttachedRoute` — the same route
+# shape (`matches`/`policies`/`backends`/...) that used to live under
+# `binds[].listeners[].routes[]`, plus a `gateways` field (string or array of
+# strings, `<gateway-name>` or `<gateway-name>/<listener-name>`) that attaches
+# the route to a gateway declared under the top-level `gateways:` map instead
+# of positional nesting. Both routes below attach to llm-gateway (port 3001,
+# see `gateways:` above), matching the port the old `binds` entry used.
 #
 # `policies.ai.routes` and `policies.backendAuth` are each schema-valid in TWO
 # places: at the route level (`routes[].policies.*`) and nested inside the ai
@@ -126,8 +157,8 @@ mcp:
 # places `backendAuth` as a bare top-level key on the route (sibling of
 # `matches`/`policies`/`backends`) — that key does not exist on `LocalRoute`
 # (`additionalProperties: false`, only name/namespace/ruleName/hostnames/
-# matches/policies/backends) and was NOT followed; `backendAuth` stays inside
-# `policies:` per the schema.
+# matches/policies/backends, plus `gateways` on the top-level-array variant)
+# and was NOT followed; `backendAuth` stays inside `policies:` per the schema.
 #
 # CONFIRMED (Task 6, off-stack): environment-variable expansion of
 # `policies.backendAuth.key` works. Unsetting ANTHROPIC_API_KEY made the
@@ -139,74 +170,73 @@ mcp:
 # expansion for the *shorthand* `llm.models[].params.apiKey` field (e.g. in
 # examples/llm-basic/config.yaml and the Anthropic provider doc) — a
 # different field on a different config shape (`llm:` top-level shorthand,
-# not the `binds:`/`backendAuth` long form used here). The mechanism turns
+# not the `gateways:`/`backendAuth` long form used here). The mechanism turns
 # out to be the same underneath either way: the loader expands
 # environment-variable references anywhere in the raw file text, including,
 # disastrously, inside comments — see the warning at the top of this file.
-binds:
-  - port: 3001
-    listeners:
-      - routes:
-          # Subscription OAuth. NO credential block — that absence is what makes
-          # this passthrough: Claude Code's own OAuth token and its
-          # anthropic-beta: oauth-2025-04-20 header travel upstream untouched.
-          # Client sets ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/claude
-          - matches:
-              - path:
-                  pathPrefix: /claude
-            policies:
-              urlRewrite:
-                path:
-                  prefix: /
-            backends:
-              - ai:
-                  name: claude-passthrough
-                  provider:
-                    anthropic: {}
-                  policies:
-                    ai:
-                      routes:
-                        /v1/messages: messages
-                        /v1/messages/count_tokens: anthropicTokenCount
-                        '*': passthrough
+routes:
+  # Subscription OAuth. NO credential block — that absence is what makes
+  # this passthrough: Claude Code's own OAuth token and its
+  # anthropic-beta: oauth-2025-04-20 header travel upstream untouched.
+  # Client sets ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/claude
+  - gateways: llm-gateway
+    matches:
+      - path:
+          pathPrefix: /claude
+    policies:
+      urlRewrite:
+        path:
+          prefix: /
+    backends:
+      - ai:
+          name: claude-passthrough
+          provider:
+            anthropic: {}
+          policies:
+            ai:
+              routes:
+                /v1/messages: messages
+                /v1/messages/count_tokens: anthropicTokenCount
+                '*': passthrough
 
-          # API key. The gateway attaches the real credential; the box sends a
-          # dummy ANTHROPIC_AUTH_TOKEN and never sees the key.
-          # Client sets ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/api
-          - matches:
-              - path:
-                  pathPrefix: /api
-            policies:
-              urlRewrite:
-                path:
-                  prefix: /
-              backendAuth:
-                key: "$ANTHROPIC_API_KEY"
-            backends:
-              - ai:
-                  name: claude-keyed
-                  provider:
-                    anthropic: {}
-                  # Upstream host for this route only, defaulted in docker-compose.yml
-                  # (env var AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST) so a non-Anthropic key (e.g.
-                  # LiteLLM) can be pointed at its actual provider instead of
-                  # api.anthropic.com. Do not add this to the /claude passthrough
-                  # backend above — it must keep forwarding to Anthropic untouched.
-                  hostOverride: "$AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST"
-                  policies:
-                    # Both the default (api.anthropic.com:443) and any custom
-                    # override (e.g. a LiteLLM endpoint) speak TLS, never
-                    # plain HTTP — hostOverride only replaces host:port, it
-                    # does not imply a scheme. Without this, agentgateway
-                    # sends plain HTTP to whatever hostOverride names, which
-                    # a TLS-only upstream answers with a 400 from its own TLS
-                    # frontend (nginx, etc). An empty object means "use TLS
-                    # with default settings". Do not add insecure or
-                    # insecureHost here: a certificate that fails to verify
-                    # is for the operator to fix, not to silence.
-                    backendTLS: {}
-                    ai:
-                      routes:
-                        /v1/messages: messages
-                        /v1/messages/count_tokens: anthropicTokenCount
-                        '*': passthrough
+  # API key. The gateway attaches the real credential; the box sends a
+  # dummy ANTHROPIC_AUTH_TOKEN and never sees the key.
+  # Client sets ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/api
+  - gateways: llm-gateway
+    matches:
+      - path:
+          pathPrefix: /api
+    policies:
+      urlRewrite:
+        path:
+          prefix: /
+      backendAuth:
+        key: "$ANTHROPIC_API_KEY"
+    backends:
+      - ai:
+          name: claude-keyed
+          provider:
+            anthropic: {}
+          # Upstream host for this route only, defaulted in docker-compose.yml
+          # (env var AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST) so a non-Anthropic key (e.g.
+          # LiteLLM) can be pointed at its actual provider instead of
+          # api.anthropic.com. Do not add this to the /claude passthrough
+          # backend above — it must keep forwarding to Anthropic untouched.
+          hostOverride: "$AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST"
+          policies:
+            # Both the default (api.anthropic.com:443) and any custom
+            # override (e.g. a LiteLLM endpoint) speak TLS, never
+            # plain HTTP — hostOverride only replaces host:port, it
+            # does not imply a scheme. Without this, agentgateway
+            # sends plain HTTP to whatever hostOverride names, which
+            # a TLS-only upstream answers with a 400 from its own TLS
+            # frontend (nginx, etc). An empty object means "use TLS
+            # with default settings". Do not add insecure or
+            # insecureHost here: a certificate that fails to verify
+            # is for the operator to fix, not to silence.
+            backendTLS: {}
+            ai:
+              routes:
+                /v1/messages: messages
+                /v1/messages/count_tokens: anthropicTokenCount
+                '*': passthrough
