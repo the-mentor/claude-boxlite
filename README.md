@@ -115,15 +115,15 @@ publishes binds `127.0.0.1` only, which keeps it off your LAN — but that is no
 keeping it off the box: `host.boxlite.internal` resolves to the host loopback proxy, so **any
 running box can reach any port this compose file publishes on 127.0.0.1**, exactly as if it
 were the host itself. Loopback narrows the audience to "this machine plus every box on it," not
-to "the host only." That's why the admin UI's port is not published by default — see below.
+to "the host only." That's why the admin API's port is not published by default — see below.
 
 | Bind | Serves |
 |---|---|
 | `:3000/mcp` | multiplexed MCP tools (`github` live, proxied to a sibling `github-mcp` container — not GitHub's remote endpoint; others commented in `agentgateway/config.yaml`) |
 | `:3001/claude` | Anthropic passthrough — your subscription OAuth token goes upstream untouched |
 | `:3001/api` | Anthropic-Messages-API keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host; upstream defaults to `api.anthropic.com` but is configurable via `AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST` (e.g. for a LiteLLM key) |
-| `:15001/ui` | raw admin UI — **not published by default** (commented out in `agentgateway/docker-compose.yml`); its `/config_dump` is unauthenticated and returns real credential values, so publishing it hands every box a way to read `ANTHROPIC_API_KEY` back out. Uncomment the port temporarily for local debugging only while no untrusted box is running |
-| `:15000/ui` | password-protected admin UI — **on by default**; same UI and tool playground, behind HTTP basic auth. See "Admin UI" below |
+| `:15001/ui` | raw admin API (agentgateway's built-in admin interface) — **not published by default** (commented out in `agentgateway/docker-compose.yml`); its `/config_dump` is unauthenticated and returns real credential values, so publishing it hands every box a way to read `ANTHROPIC_API_KEY` back out. Uncomment the port temporarily for local debugging only while no untrusted box is running |
+| `:15000/ui` | admin UI — **on by default**; the same config viewer and tool playground as the admin API above, behind HTTP basic auth. See "Admin UI" below |
 
 (`:3000` and `:3001` are two separately named gateways in `agentgateway/config.yaml`'s
 `gateways:` map — `mcp-gateway` and `llm-gateway` — not one gateway with two binds; the

@@ -119,7 +119,7 @@ that's not viable until upstream lands it.
   `config.yaml` declares two named gateways under its top-level `gateways:` map (the older
   `binds:`/`mcp.port` shape is deprecated) — `mcp-gateway` on `:3000`, which is what the box's
   baked `/root/.claude.json` already points at, and `llm-gateway` on `:3001` for the two
-  Anthropic routes — both loopback-bound. The admin UI (`:15001`) binds loopback
+  Anthropic routes — both loopback-bound. The admin API (`:15001`) binds loopback
   container-internally (`ADMIN_ADDR`) but is NOT published in `docker-compose.yml` by default:
   every running box reaches host loopback via `host.boxlite.internal`, so publishing it would
   expose its unauthenticated `/config_dump` (which contains real credential values, since
