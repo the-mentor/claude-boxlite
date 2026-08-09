@@ -22,11 +22,23 @@
 # live run gets a TLS or 404-on-path error here, retry with the explicit
 # `host: api.githubcopilot.com` / `port: 443` / `path: /mcp/` form plus
 # `policies.backendTLS: {}`.
+#
+# ALSO NOT confirmed: whether `$GH_TOKEN` below is actually expanded at
+# runtime. Upstream only documents $VAR expansion for `apiKey`-style fields;
+# the traffic-aws-agentcore example that corroborates the
+# `requestHeaderModifier.set` key path uses a hardcoded literal header value
+# ("user-foo"), not a $VAR reference, so it proves the key path only, not
+# expansion. If agentgateway sends the literal string "Bearer $GH_TOKEN" to
+# GitHub instead of expanding it, auth fails silently — Step 8's bare-listener
+# curl (405/406) would not catch this. Task 6 needs to check agentgateway's
+# startup/debug logs for the resolved header, or make an authenticated call
+# through the GitHub MCP target, not just confirm the listener answers.
 
 mcp:
   port: 3000
   targets:
-    # GitHub's remote MCP server. Reuses the GH_TOKEN already in .env.
+    # GitHub's remote MCP server. Set GH_TOKEN in .env to use it (not yet
+    # present there as of this writing).
     - name: github
       mcp:
         host: https://api.githubcopilot.com/mcp/
