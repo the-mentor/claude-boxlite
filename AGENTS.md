@@ -107,15 +107,29 @@ that's not viable until upstream lands it.
   inject `BOX_NAME`, set to the box name being booted/attached to (independent of
   `passthrough_vars`, since it's not a host env var), so a session can tell which box it's
   running in.
-- **Host-side gateway.** `agentgateway/` runs agentgateway via docker compose on three
-  loopback binds: MCP on `:3000` (what the box's baked `/root/.claude.json` already points
-  at), two Anthropic routes on `:3001`, and the admin UI on `:15000`. Loopback is sufficient
-  because `host.boxlite.internal` resolves to the host loopback proxy. The `/api` route
-  carries `backendAuth` and attaches `$ANTHROPIC_API_KEY` host-side, so that key is
-  deliberately absent from `passthrough_vars` in that mode; the `/claude` route has no
-  credential block at all, which is what makes it forward a subscription's OAuth token
-  untouched. `llm_vars` in the `justfile` picks which credential vars reach the box based on
-  what `.env` sets — the mode is data, not a flag.
+- **Host-side gateway.** `agentgateway/docker-compose.yml` runs two services, not one:
+  `agentgateway` itself, and a sibling `github-mcp` container (GitHub's official
+  `github-mcp-server` image, run in HTTP mode with no published host port — only agentgateway
+  reaches it, over the compose network). `config.yaml`'s `github` MCP target proxies there
+  instead of GitHub's remote MCP endpoint, which is unreachable from this Docker host (TLS
+  handshake failure, reproduced independently of agentgateway); `github-mcp-server` enforces
+  its own OAuth layer on every HTTP-mode request including `initialize`, so agentgateway
+  injects `Authorization: Bearer $GH_TOKEN` via a `requestHeaderModifier` on that target.
+  `config.yaml` declares two named gateways under its top-level `gateways:` map (the older
+  `binds:`/`mcp.port` shape is deprecated) — `mcp-gateway` on `:3000`, which is what the box's
+  baked `/root/.claude.json` already points at, and `llm-gateway` on `:3001` for the two
+  Anthropic routes — plus the admin UI on `:15000`; all three loopback-bound. Loopback is
+  sufficient because `host.boxlite.internal` resolves to the host loopback proxy. The `/api`
+  route carries `backendAuth` and attaches `$ANTHROPIC_API_KEY` host-side (its upstream is
+  configurable via `AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST`, `host:port` with no scheme,
+  defaulting to `api.anthropic.com:443`, for routing a non-Anthropic key such as a LiteLLM
+  deployment to its actual provider), so that key is deliberately absent from
+  `passthrough_vars` in that mode; the `/claude` route has no credential block at all, which is
+  what makes it forward a subscription's OAuth token untouched. `llm_vars` in the `justfile`
+  picks which credential vars reach the box based on what `.env` sets — the mode is data, not a
+  flag. Either way, `ANTHROPIC_API_KEY` itself never reaches the box — only `GH_TOKEN`/
+  `GITHUB_TOKEN` does, because the box runs `gh` and `git push` itself and no proxy can do that
+  for it.
 - **GitHub auth.** `custom/Dockerfile` configures git's `credential.https://github.com.helper`
   to `gh auth git-credential`, so an injected `GH_TOKEN`/`GITHUB_TOKEN` authenticates both the
   `gh` CLI and `git clone`/`push` over HTTPS with no separate login step.

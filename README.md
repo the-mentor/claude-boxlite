@@ -120,6 +120,12 @@ host loopback proxy, so nothing is exposed to your network.
 | `:3001/api` | Anthropic-Messages-API keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host; upstream defaults to `api.anthropic.com` but is configurable via `AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST` (e.g. for a LiteLLM key) |
 | `:15000/ui` | admin UI |
 
+(`:3000` and `:3001` are two separately named gateways in `agentgateway/config.yaml`'s
+`gateways:` map — `mcp-gateway` and `llm-gateway` — not one gateway with two binds.) `:3000`
+also allows CORS from the admin UI's tool playground (`127.0.0.1:15000`) so it can call the
+MCP endpoint directly from browser JavaScript; the box itself talks to it server-to-server and
+is unaffected.
+
 It is long-lived and restarts with Docker; `just up`/`up-dev` do not start it. If
 `ANTHROPIC_BASE_URL` points at it and it is not running, the box will fail to reach Anthropic
 — `just gateway-logs` is the first thing to check.
@@ -133,6 +139,14 @@ If `ANTHROPIC_API_KEY` isn't actually an Anthropic key — e.g. a LiteLLM key �
 no path). This only changes where the `/api` route forwards to; it's unrelated to
 `ANTHROPIC_BASE_URL`, which is where the box itself sends traffic (always the gateway, in
 this mode).
+
+**What actually stays off the box.** "The gateway keeps credentials host-side" is about one
+credential, not all of them:
+
+| Credential | Reaches the box? | Why |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | No | the box never calls Anthropic directly — the gateway does it on the box's behalf, so the key has no reason to be there |
+| `GH_TOKEN` / `GITHUB_TOKEN` | Yes | the box runs `gh` and `git push` itself, and no proxy can do that for it |
 
 **Troubleshooting**
 
