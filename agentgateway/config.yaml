@@ -74,6 +74,27 @@ gateways:
   mcp-gateway:
     port: 3000
     protocol: HTTP
+    # CORS exists solely so the admin UI's "tool playground" — served from
+    # 127.0.0.1:15000, a different origin than this gateway's :3000 — can
+    # call the MCP endpoint directly from browser JavaScript. The box itself
+    # never needs this: it talks to :3000 server-to-server (no browser, no
+    # Origin header, not subject to CORS at all). Schema check (v1.4.1,
+    # /tmp/agw-schema.json, defs.LocalGateway): `cors` (`CorsSerde`) lives
+    # directly on the gateway, all fields optional. Origin list is
+    # deliberately narrow (only the two loopback UI origins, not `*`) since
+    # this endpoint fronts an authenticated GitHub MCP server; no
+    # allowCredentials, since there is no cookie auth here for it to help.
+    # `Mcp-Session-Id` must be in exposeHeaders because the streamable-HTTP
+    # transport returns the session in that response header and browser JS
+    # cannot read a cross-origin header that isn't explicitly exposed; the
+    # lowercase `mcp-session-id` is also allow-listed so the browser can send
+    # it back on subsequent requests (header matching is case-insensitive,
+    # both forms kept for clarity with what's actually sent each direction).
+    cors:
+      allowOrigins: ["http://127.0.0.1:15000", "http://localhost:15000"]
+      allowMethods: ["GET", "POST", "DELETE", "OPTIONS"]
+      allowHeaders: ["content-type", "accept", "mcp-session-id", "mcp-protocol-version"]
+      exposeHeaders: ["Mcp-Session-Id"]
   llm-gateway:
     port: 3001
     protocol: HTTP
