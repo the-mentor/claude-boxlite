@@ -7,8 +7,9 @@ This file provides guidance to AI coding agents when working with code in this r
 A two-layer Docker image that runs Claude Code inside a [BoxLite](https://boxliteai.com)
 microVM, with an MCP config baked in pointing at a host-side
 [agentgateway](https://agentgateway.dev) (`http://host.boxlite.internal:3000/mcp`). This repo
-only covers the box side (building the image, booting the VM) — the agentgateway itself runs
-separately on the host.
+covers both halves: the box side (building the image, booting the VM) and the host side
+(`agentgateway/`, a docker compose service started with `just gateway-up`), which serves MCP
+on `:3000` and two Anthropic routes on `:3001`.
 
 ## Commands
 
@@ -19,6 +20,7 @@ just build              # start the local registry, build base + custom images, 
 just exec               # open a session in the running box (alias: just shell)
 just list               # list running boxes across every box name (see below), forwarding args to `boxlite list`
 just down               # stop and remove the box
+just gateway-up/down/logs # manage the host-side agentgateway
 just registry-up/down   # manage the local docker-compose registry directly
 just registry-login     # log in to an authenticated registry (e.g. ECR), see below
 just install/uninstall  # symlink the cb wrapper onto PATH (see below)
@@ -104,6 +106,15 @@ that's not viable until upstream lands it.
   inject `BOX_NAME`, set to the box name being booted/attached to (independent of
   `passthrough_vars`, since it's not a host env var), so a session can tell which box it's
   running in.
+- **Host-side gateway.** `agentgateway/` runs agentgateway via docker compose on three
+  loopback binds: MCP on `:3000` (what the box's baked `/root/.claude.json` already points
+  at), two Anthropic routes on `:3001`, and the admin UI on `:15000`. Loopback is sufficient
+  because `host.boxlite.internal` resolves to the host loopback proxy. The `/api` route
+  carries `backendAuth` and attaches `$ANTHROPIC_API_KEY` host-side, so that key is
+  deliberately absent from `passthrough_vars` in that mode; the `/claude` route has no
+  credential block at all, which is what makes it forward a subscription's OAuth token
+  untouched. `llm_vars` in the `justfile` picks which credential vars reach the box based on
+  what `.env` sets — the mode is data, not a flag.
 - **GitHub auth.** `custom/Dockerfile` configures git's `credential.https://github.com.helper`
   to `gh auth git-credential`, so an injected `GH_TOKEN`/`GITHUB_TOKEN` authenticates both the
   `gh` CLI and `git clone`/`push` over HTTPS with no separate login step.

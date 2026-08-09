@@ -5,9 +5,10 @@ Build and run [Claude Code](https://github.com/anthropics/claude-code) inside a
 Code at a host-side [agentgateway](https://agentgateway.dev). One `just` command builds the
 image and boots the box.
 
-This repo covers the **box side**: building the image and running the VM. Standing up the
-agentgateway itself is out of scope — the baked config points at
-`http://host.boxlite.internal:3000/mcp`, ready for a gateway you run separately.
+This repo covers both halves: the **box side** (building the image, running the VM) and the
+**host side** (`agentgateway/`, run with `just gateway-up`). The box's baked MCP config points
+at `http://host.boxlite.internal:3000/mcp`, which the gateway serves. The gateway can also
+broker Anthropic traffic — with an API key it holds the key host-side so the VM never sees it.
 
 ## How it works
 
@@ -59,11 +60,20 @@ Copy the env template and set your credentials:
 ```bash
 cp .env.example .env
 # Claude auth — pick ONE:
-#   subscription: get a token with `claude setup-token`, set CLAUDE_CODE_OAUTH_TOKEN=...
-#   API key:      set ANTHROPIC_API_KEY=... (optionally ANTHROPIC_BASE_URL=... for a gateway)
-# Optional GitHub: set GH_TOKEN=... (a PAT) to enable gh + git over HTTPS
+#   subscription: `claude setup-token`, then CLAUDE_CODE_OAUTH_TOKEN=...
+#                 optionally ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/claude
+#   API key:      ANTHROPIC_API_KEY=... plus
+#                 ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/api
+#                 and ANTHROPIC_AUTH_TOKEN=unused (value unchecked; the gateway
+#                 attaches the real key, so it never enters the box)
+# Optional GitHub: set GH_TOKEN=... (a PAT) — used by the box AND the gateway's github MCP target
 # Optional git identity: GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL
 ```
+
+> **Upgrading:** if your `.env` already sets `ANTHROPIC_BASE_URL` for some other proxy, add
+> `ANTHROPIC_AUTH_TOKEN=...` to it. Setting `ANTHROPIC_BASE_URL` now means "the credential
+> lives outside the box", so `ANTHROPIC_API_KEY` is no longer forwarded — without an auth
+> token the box would reach your proxy with no credential at all.
 
 Copy the registries template the same way (or let `just up`/`up-dev` create it for you on first
 run):
@@ -85,6 +95,9 @@ just build             # start the local registry, build base + custom images, p
 just shell             # open a session in the running box
 just list              # list running boxes
 just down              # stop and remove the box
+just gateway-up        # start the host-side agentgateway (MCP + Anthropic routes)
+just gateway-down      # stop it
+just gateway-logs      # follow its logs
 ```
 
 Use `just up-dev` the first time (or after changing the image); use `just up` for a fast
@@ -92,6 +105,37 @@ boot once the images are built. Both run Claude Code interactively inside the bo
 need a valid `CLAUDE_CODE_OAUTH_TOKEN` in `.env`. The `agentgateway` MCP server is
 configured user-scoped in `/root/.claude.json`, so Claude Code points at the host gateway
 in any project — including a mounted host directory.
+
+### The host-side gateway
+
+`just gateway-up` runs agentgateway from `agentgateway/docker-compose.yml`. It binds
+`127.0.0.1` only — the box still reaches it because `host.boxlite.internal` resolves to the
+host loopback proxy, so nothing is exposed to your network.
+
+| Bind | Serves |
+|---|---|
+| `:3000/mcp` | multiplexed MCP tools (`github` live; others commented in `agentgateway/config.yaml`) |
+| `:3001/claude` | Anthropic passthrough — your subscription OAuth token goes upstream untouched |
+| `:3001/api` | Anthropic keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host |
+| `:15000/ui` | admin UI and playground |
+
+It is long-lived and restarts with Docker; `just up`/`up-dev` do not start it. If
+`ANTHROPIC_BASE_URL` points at it and it is not running, the box will fail to reach Anthropic
+— `just gateway-logs` is the first thing to check.
+
+The `/mcp` half works in every auth mode. Only the keyed mode keeps a credential off the VM:
+in subscription mode Claude Code must hold the OAuth token to send it, so that mode buys
+observability and a single egress point, not credential custody.
+
+**Troubleshooting**
+
+| Symptom | Cause |
+|---|---|
+| `/mcp` connects but lists no tools | `GH_TOKEN` unset or expired — the upstream 401 shows in `just gateway-logs` |
+| 401 from Anthropic | your `ANTHROPIC_BASE_URL` path and your credential disagree: `/claude` needs the OAuth token, `/api` needs the gateway to have `ANTHROPIC_API_KEY` |
+| 401 in subscription mode with the right path | `ANTHROPIC_AUTH_TOKEN` is set and shadowing the OAuth token — unset it |
+| 400 `Extra inputs are not permitted` | beta headers the backend rejects; set `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` and add it to `passthrough_vars` |
+| Box can't reach Anthropic at all | the gateway isn't running — `just gateway-up` |
 
 `up`, `up-dev`, `shell`, and `down` take an optional box name (default `claude-box`), so you
 can run several boxes side by side. `up`/`up-dev` also accept `-f`/`--force` to replace an
@@ -114,7 +158,8 @@ just up -e test=1 -e test2=2   # boot with test=1 and test2=2 set in the box
 ```
 
 Other recipes: `just registry-up` / `just registry-down` manage the local registry
-directly; `just --list` shows everything.
+directly; `just gateway-up` / `just gateway-down` / `just gateway-logs` manage the host-side
+agentgateway (see below); `just --list` shows everything.
 
 ### Running from anywhere
 
