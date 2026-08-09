@@ -23,7 +23,7 @@ services:
       # default here is what makes the var optional in .env: config.yaml requires
       # this to always resolve to something, so it must never reach the gateway
       # empty or unset.
-      ANTHROPIC_UPSTREAM_HOST: "${ANTHROPIC_UPSTREAM_HOST:-api.anthropic.com}"
+      AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST: "${AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST:-api.anthropic.com}"
     volumes:
       - ./config.yaml:/config.yaml:ro
     restart: unless-stopped
