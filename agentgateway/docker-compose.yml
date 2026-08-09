@@ -1,0 +1,23 @@
+# Host-side agentgateway. Start with: just gateway-up
+#
+# All ports bind 127.0.0.1 only. The box still reaches them via
+# host.boxlite.internal, which resolves to the host loopback proxy.
+services:
+  agentgateway:
+    image: cr.agentgateway.dev/agentgateway:v1.4.1
+    container_name: agentgateway
+    command: ["-f", "/config.yaml"]
+    ports:
+      - "127.0.0.1:3000:3000"   # MCP
+      - "127.0.0.1:3001:3001"   # LLM routes
+      - "127.0.0.1:15000:15000" # admin UI
+    environment:
+      # Required, or the UI binds container-loopback and the published port is dead.
+      ADMIN_ADDR: 0.0.0.0:15000
+      # Both may legitimately be empty: a subscription user has no API key,
+      # and the /claude passthrough route does not need one.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      GH_TOKEN: "${GH_TOKEN:-}"
+    volumes:
+      - ./config.yaml:/config.yaml:ro
+    restart: unless-stopped

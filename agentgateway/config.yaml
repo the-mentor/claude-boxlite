@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# Host-side agentgateway for claude-boxlite.
+# Secrets are $VAR references only — never paste a literal credential here.
+# This file is tracked in git.
+#
+# Schema check (v1.4.1, /tmp/agw-schema.json, $defs.LocalMcpTarget): a remote
+# target is `targets[].mcp.{host}` or `targets[].mcp.{host,port,path}` —
+# `unevaluatedProperties: false` on that object rules out a bare `url:` or a
+# `headers:` map (both used by the pre-schema-check draft of this file).
+# Bearer-token injection instead goes through the per-target
+# `policies.requestHeaderModifier.set` map ($defs.SimpleLocalBackendPolicies),
+# the same mechanism the upstream traffic-aws-agentcore example uses for a
+# static auth header.
+#
+# NOT confirmed by the schema: whether the single-string `host` field parses
+# a path out of a full URL (its own examples only show a bare origin or a
+# bare `host:port`), or how backend TLS gets enabled for the `host+port+path`
+# form (no scheme/tls field exists on that variant; $defs.LocalBackendTLS is
+# all-optional tuning knobs, not an on/off switch). Kept the original full
+# URL string under the corrected `host` key as the minimal fix. If Task 6's
+# live run gets a TLS or 404-on-path error here, retry with the explicit
+# `host: api.githubcopilot.com` / `port: 443` / `path: /mcp/` form plus
+# `policies.backendTLS: {}`.
+
+mcp:
+  port: 3000
+  targets:
+    # GitHub's remote MCP server. Reuses the GH_TOKEN already in .env.
+    - name: github
+      mcp:
+        host: https://api.githubcopilot.com/mcp/
+      policies:
+        requestHeaderModifier:
+          set:
+            Authorization: "Bearer $GH_TOKEN"
