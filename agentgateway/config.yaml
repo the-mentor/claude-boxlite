@@ -47,6 +47,32 @@ mcp:
           set:
             Authorization: "Bearer $GH_TOKEN"
 
+    # --- Not enabled. These are stdio servers and this container has no node/uv,
+    # --- so each needs a sibling compose service running its official image over
+    # --- HTTP, with the target below pointing at it across the compose network.
+    # --- Field name corrected to `mcp.host` (not `mcp.url`) to match the live
+    # --- `github` target above — see the file header comment: the schema's
+    # --- LocalMcpTarget has `unevaluatedProperties: false` and rejects a bare
+    # --- `url:` key, so `url:` here would fail validation the moment it's
+    # --- uncommented.
+    #
+    # Terraform — image: hashicorp/terraform-mcp-server (supports streamable HTTP)
+    # - name: terraform
+    #   mcp:
+    #     host: http://terraform-mcp:8080/mcp
+    #
+    # Playwright — image: mcr.microsoft.com/playwright/mcp
+    # Keeps browsers off both the host and the VM.
+    # - name: playwright
+    #   mcp:
+    #     host: http://playwright-mcp:8931/mcp
+    #
+    # Fetch — no official image. Run `uvx mcp-server-fetch` on the host and point
+    # at it, or drop this target entirely.
+    # - name: fetch
+    #   mcp:
+    #     host: http://host.docker.internal:8000/mcp
+
 # LLM routes (Task 2). Schema check (v1.4.1, /tmp/agw-schema.json +
 # schema/config.md rendered from it): top level is `binds[].listeners[].routes[]`,
 # same shape already confirmed valid for `mcp:` targets in Task 1.
