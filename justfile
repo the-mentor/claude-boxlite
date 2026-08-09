@@ -2,7 +2,7 @@ set dotenv-load
 
 base_tag   := "claude-boxlite-base"
 custom_tag := "claude-boxlite-custom"
-registry   := "localhost:5000"
+registry   := "localhost:5551"
 box_name   := "claude-box"
 disk_size  := "10"
 # Env vars passed into the box when set (in .env via dotenv-load, or the host
