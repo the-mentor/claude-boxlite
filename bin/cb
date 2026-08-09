@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Runs this repo's justfile from any working directory. Install onto PATH
-# with `just install` (see justfile), then run e.g. `claude-boxlite up-dev`
+# with `just install` (see justfile), then run e.g. `cb up-dev`
 # from anywhere.
 set -eu
 
