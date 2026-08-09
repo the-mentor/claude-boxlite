@@ -1,38 +1,55 @@
-# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+# WARNING: agentgateway's config loader expands every dollar-sign-plus-word
+# token found anywhere in this file's raw text, including inside comments,
+# and aborts the whole process if any one of them has no matching
+# environment variable. No comment below may contain a dollar sign followed
+# by a word — spell variable names out plainly (e.g. write GH_TOKEN, not a
+# dollar-prefixed reference) or the gateway crash-loops on startup. This bit
+# us once already; do not step on it again.
+#
+# The line 1 `yaml-language-server: schema=...` editor directive that used to
+# open this file was removed for exactly this reason: the loader tried to
+# resolve "schema" as an environment variable and crash-looped on it. Do not
+# restore that directive.
 #
 # Host-side agentgateway for claude-boxlite.
-# Secrets are $VAR references only — never paste a literal credential here.
+# Secrets are environment-variable references only — never paste a literal
+# credential here.
 # This file is tracked in git.
 #
-# Schema check (v1.4.1, /tmp/agw-schema.json, $defs.LocalMcpTarget): a remote
+# Schema check (v1.4.1, /tmp/agw-schema.json, defs.LocalMcpTarget): a remote
 # target is `targets[].mcp.{host}` or `targets[].mcp.{host,port,path}` —
 # `unevaluatedProperties: false` on that object rules out a bare `url:` or a
 # `headers:` map (both used by the pre-schema-check draft of this file).
 # Bearer-token injection instead goes through the per-target
-# `policies.requestHeaderModifier.set` map ($defs.SimpleLocalBackendPolicies),
+# `policies.requestHeaderModifier.set` map (defs.SimpleLocalBackendPolicies),
 # the same mechanism the upstream traffic-aws-agentcore example uses for a
 # static auth header.
 #
 # NOT confirmed by the schema: whether the single-string `host` field parses
 # a path out of a full URL (its own examples only show a bare origin or a
 # bare `host:port`), or how backend TLS gets enabled for the `host+port+path`
-# form (no scheme/tls field exists on that variant; $defs.LocalBackendTLS is
+# form (no scheme/tls field exists on that variant; defs.LocalBackendTLS is
 # all-optional tuning knobs, not an on/off switch). Kept the original full
 # URL string under the corrected `host` key as the minimal fix. If Task 6's
 # live run gets a TLS or 404-on-path error here, retry with the explicit
 # `host: api.githubcopilot.com` / `port: 443` / `path: /mcp/` form plus
 # `policies.backendTLS: {}`.
 #
-# ALSO NOT confirmed: whether `$GH_TOKEN` below is actually expanded at
-# runtime. Upstream only documents $VAR expansion for `apiKey`-style fields;
-# the traffic-aws-agentcore example that corroborates the
+# ALSO NOT confirmed: whether the GH_TOKEN reference on the Authorization
+# header below is actually expanded at runtime. Upstream only documents
+# environment-variable expansion for `apiKey`-style fields; the
+# traffic-aws-agentcore example that corroborates the
 # `requestHeaderModifier.set` key path uses a hardcoded literal header value
-# ("user-foo"), not a $VAR reference, so it proves the key path only, not
-# expansion. If agentgateway sends the literal string "Bearer $GH_TOKEN" to
-# GitHub instead of expanding it, auth fails silently — Step 8's bare-listener
-# curl (405/406) would not catch this. Task 6 needs to check agentgateway's
-# startup/debug logs for the resolved header, or make an authenticated call
-# through the GitHub MCP target, not just confirm the listener answers.
+# ("user-foo"), not an environment-variable reference, so it proves the key
+# path only, not expansion. This could NOT be exercised in Task 6's run: the
+# environment cannot complete a TLS handshake to api.githubcopilot.com at
+# all, with or without agentgateway in front of it, so no request ever got
+# far enough to reveal whether the header was expanded or sent literally.
+# Still an open risk, not confirmed fine — untested for an environmental
+# reason, not because it passed. If a future environment can reach GitHub,
+# check agentgateway's startup/debug logs for the resolved header, or make an
+# authenticated call through the GitHub MCP target, not just confirm the
+# listener answers.
 
 mcp:
   port: 3000
@@ -94,18 +111,20 @@ mcp:
 # matches/policies/backends) and was NOT followed; `backendAuth` stays inside
 # `policies:` per the schema.
 #
-# NOT confirmed by the schema: `$VAR` expansion of `policies.backendAuth.key`
-# (type `FileOrInline` = `{file: string} | string`, no expansion behavior
-# documented on that type itself). Upstream's own docs demonstrate `$VAR`
-# expansion only for the *shorthand* `llm.models[].params.apiKey` field (e.g.
-# `apiKey: "$ANTHROPIC_API_KEY"` in examples/llm-basic/config.yaml and the
-# Anthropic provider doc) — a different field on a different config shape
-# (`llm:` top-level shorthand, not the `binds:`/`backendAuth` long form used
-# here). Same category of unverified risk Task 1 flagged for the MCP
-# `requestHeaderModifier.set` header value. If the keyed /api route in Task 6
-# gets a 401 with a real key present in .env, check agentgateway's logs for
-# whether it sent the literal string "$ANTHROPIC_API_KEY" instead of expanding
-# it.
+# CONFIRMED (Task 6, off-stack): environment-variable expansion of
+# `policies.backendAuth.key` works. Unsetting ANTHROPIC_API_KEY made the
+# gateway fail at startup with an environment-variable-not-found error for
+# that name, and with it set, the outbound request carried the real value.
+# This was previously unconfirmed by the schema alone: the field's type is
+# `FileOrInline` = `{file: string} | string`, which documents no expansion
+# behavior on the type itself, and upstream's own docs only demonstrate this
+# expansion for the *shorthand* `llm.models[].params.apiKey` field (e.g. in
+# examples/llm-basic/config.yaml and the Anthropic provider doc) — a
+# different field on a different config shape (`llm:` top-level shorthand,
+# not the `binds:`/`backendAuth` long form used here). The mechanism turns
+# out to be the same underneath either way: the loader expands
+# environment-variable references anywhere in the raw file text, including,
+# disastrously, inside comments — see the warning at the top of this file.
 binds:
   - port: 3001
     listeners:
