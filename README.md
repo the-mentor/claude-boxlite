@@ -109,22 +109,25 @@ in any project — including a mounted host directory.
 
 ### The host-side gateway
 
-`just gateway-up` runs agentgateway from `agentgateway/docker-compose.yml`. It binds
-`127.0.0.1` only — the box still reaches it because `host.boxlite.internal` resolves to the
-host loopback proxy, so nothing is exposed to your network.
+`just gateway-up` runs agentgateway from `agentgateway/docker-compose.yml`. Every port it
+publishes binds `127.0.0.1` only, which keeps it off your LAN — but that is not the same as
+keeping it off the box: `host.boxlite.internal` resolves to the host loopback proxy, so **any
+running box can reach any port this compose file publishes on 127.0.0.1**, exactly as if it
+were the host itself. Loopback narrows the audience to "this machine plus every box on it," not
+to "the host only." That's why the admin UI's port is not published by default — see below.
 
 | Bind | Serves |
 |---|---|
 | `:3000/mcp` | multiplexed MCP tools (`github` live, proxied to a sibling `github-mcp` container — not GitHub's remote endpoint; others commented in `agentgateway/config.yaml`) |
 | `:3001/claude` | Anthropic passthrough — your subscription OAuth token goes upstream untouched |
 | `:3001/api` | Anthropic-Messages-API keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host; upstream defaults to `api.anthropic.com` but is configurable via `AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST` (e.g. for a LiteLLM key) |
-| `:15000/ui` | admin UI |
+| `:15000/ui` | admin UI — **not published by default** (commented out in `agentgateway/docker-compose.yml`); its `/config_dump` is unauthenticated and returns real credential values, so publishing it hands every box a way to read `ANTHROPIC_API_KEY` back out. Uncomment the port temporarily for local debugging only while no untrusted box is running |
 
 (`:3000` and `:3001` are two separately named gateways in `agentgateway/config.yaml`'s
 `gateways:` map — `mcp-gateway` and `llm-gateway` — not one gateway with two binds.) `:3000`
 also allows CORS from the admin UI's tool playground (`127.0.0.1:15000`) so it can call the
-MCP endpoint directly from browser JavaScript; the box itself talks to it server-to-server and
-is unaffected.
+MCP endpoint directly from browser JavaScript once that port is temporarily published (see
+above); the box itself talks to it server-to-server and is unaffected either way.
 
 It is long-lived and restarts with Docker; `just up`/`up-dev` do not start it. If
 `ANTHROPIC_BASE_URL` points at it and it is not running, the box will fail to reach Anthropic
@@ -145,7 +148,7 @@ credential, not all of them:
 
 | Credential | Reaches the box? | Why |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | No | the box never calls Anthropic directly — the gateway does it on the box's behalf, so the key has no reason to be there |
+| `ANTHROPIC_API_KEY` | No, when `ANTHROPIC_BASE_URL` points at the gateway's `/api` route | the box never calls Anthropic directly in that mode — the gateway does it on the box's behalf, so the key has no reason to be there. With no `ANTHROPIC_BASE_URL` set at all, `llm_vars` forwards this key straight into the box instead — the gateway isn't in the loop, so this guarantee only applies to gateway-keyed mode |
 | `GH_TOKEN` / `GITHUB_TOKEN` | Yes | the box runs `gh` and `git push` itself, and no proxy can do that for it |
 
 **Troubleshooting**

@@ -33,7 +33,7 @@ llm_vars := if env_var_or_default("CLAUDE_CODE_OAUTH_TOKEN", "") != "" {
   }
 passthrough_vars := llm_vars + " ANTHROPIC_MODEL GH_TOKEN GITHUB_TOKEN GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM KITTY_WINDOW_ID WEZTERM_EXECUTABLE ITERM_SESSION_ID WT_SESSION VTE_VERSION"
 compose    := "docker compose -f local-development/registry/docker-compose.yml"
-gateway    := "docker compose -f agentgateway/docker-compose.yml --env-file .env"
+gateway    := "docker compose -f agentgateway/docker-compose.yml"
 
 default:
     @just --list

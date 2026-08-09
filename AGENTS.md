@@ -118,18 +118,27 @@ that's not viable until upstream lands it.
   `config.yaml` declares two named gateways under its top-level `gateways:` map (the older
   `binds:`/`mcp.port` shape is deprecated) — `mcp-gateway` on `:3000`, which is what the box's
   baked `/root/.claude.json` already points at, and `llm-gateway` on `:3001` for the two
-  Anthropic routes — plus the admin UI on `:15000`; all three loopback-bound. Loopback is
-  sufficient because `host.boxlite.internal` resolves to the host loopback proxy. The `/api`
-  route carries `backendAuth` and attaches `$ANTHROPIC_API_KEY` host-side (its upstream is
-  configurable via `AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST`, `host:port` with no scheme,
-  defaulting to `api.anthropic.com:443`, for routing a non-Anthropic key such as a LiteLLM
-  deployment to its actual provider), so that key is deliberately absent from
-  `passthrough_vars` in that mode; the `/claude` route has no credential block at all, which is
-  what makes it forward a subscription's OAuth token untouched. `llm_vars` in the `justfile`
-  picks which credential vars reach the box based on what `.env` sets — the mode is data, not a
-  flag. Either way, `ANTHROPIC_API_KEY` itself never reaches the box — only `GH_TOKEN`/
-  `GITHUB_TOKEN` does, because the box runs `gh` and `git push` itself and no proxy can do that
-  for it.
+  Anthropic routes — both loopback-bound. The admin UI (`:15000`) binds loopback
+  container-internally (`ADMIN_ADDR`) but is NOT published in `docker-compose.yml` by default:
+  every running box reaches host loopback via `host.boxlite.internal`, so publishing it would
+  expose its unauthenticated `/config_dump` (which contains real credential values, since
+  agentgateway expands environment variables to raw text before parsing) and `/quitquitquit`
+  to every box, not just the host. It's commented out with a warning to that effect and should
+  only be published temporarily for local debugging while no untrusted box is running. Loopback
+  alone is not the security boundary here — a box sits inside it — publishing on loopback is
+  what actually gates reachability from a box. The `/api` route carries `backendAuth` and
+  attaches `$ANTHROPIC_API_KEY` host-side (its upstream is configurable via
+  `AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST`, `host:port` with no scheme, defaulting to
+  `api.anthropic.com:443`, for routing a non-Anthropic key such as a LiteLLM deployment to its
+  actual provider), so that key is deliberately absent from `passthrough_vars` in that mode;
+  the `/claude` route has no credential block at all, which is what makes it forward a
+  subscription's OAuth token untouched. `llm_vars` in the `justfile` picks which credential
+  vars reach the box based on what `.env` sets — the mode is data, not a flag. When
+  `ANTHROPIC_BASE_URL` points at the gateway's keyed `/api` route, `ANTHROPIC_API_KEY` itself
+  never reaches the box — only `GH_TOKEN`/`GITHUB_TOKEN` does, because the box runs `gh` and
+  `git push` itself and no proxy can do that for it. With neither `CLAUDE_CODE_OAUTH_TOKEN` nor
+  `ANTHROPIC_BASE_URL` set, `llm_vars` forwards `ANTHROPIC_API_KEY` straight into the box
+  instead — the gateway isn't involved in that mode, so the guarantee doesn't apply.
 - **GitHub auth.** `custom/Dockerfile` configures git's `credential.https://github.com.helper`
   to `gh auth git-credential`, so an injected `GH_TOKEN`/`GITHUB_TOKEN` authenticates both the
   `gh` CLI and `git clone`/`push` over HTTPS with no separate login step.

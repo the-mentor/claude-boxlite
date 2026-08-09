@@ -16,10 +16,12 @@
 # credential here.
 # This file is tracked in git.
 #
-# Schema check (v1.4.1, /tmp/agw-schema.json, defs.LocalMcpTarget): a remote
-# target is `targets[].mcp.{host}` or `targets[].mcp.{host,port,path}` —
-# `unevaluatedProperties: false` on that object rules out a bare `url:` or a
-# `headers:` map (both used by the pre-schema-check draft of this file).
+# Schema check (v1.4.1, schema pinned at
+# https://raw.githubusercontent.com/agentgateway/agentgateway/v1.4.1/schema/config.json,
+# defs.LocalMcpTarget): a remote target is `targets[].mcp.{host}` or
+# `targets[].mcp.{host,port,path}` — `unevaluatedProperties: false` on that
+# object rules out a bare `url:` or a `headers:` map (both used by the
+# pre-schema-check draft of this file).
 #
 # RESOLVED (Task 10): the `github` target below no longer points at GitHub's
 # remote MCP endpoint at all. Task 6 proved the Docker host cannot complete a
@@ -40,8 +42,8 @@
 # form; if one of them gets enabled, give it the same explicit
 # `host`/`port`/`path` treatment rather than assuming a full URL parses.
 #
-# RESOLVED (Task 12): the paragraph above was wrong. A raw request straight
-# to github-mcp, bypassing agentgateway entirely (no Authorization header),
+# RESOLVED (Task 12): a raw request straight to github-mcp, bypassing
+# agentgateway entirely (no Authorization header),
 # got HTTP 401 on `initialize` with a Www-Authenticate: Bearer challenge.
 # github-mcp-server v1.8.0 enforces its own OAuth layer on every request in
 # http mode, including initialize, and does this regardless of whether its
@@ -76,11 +78,17 @@ gateways:
     protocol: HTTP
     # CORS exists solely so the admin UI's "tool playground" — served from
     # 127.0.0.1:15000, a different origin than this gateway's :3000 — can
-    # call the MCP endpoint directly from browser JavaScript. The box itself
-    # never needs this: it talks to :3000 server-to-server (no browser, no
-    # Origin header, not subject to CORS at all). Schema check (v1.4.1,
-    # /tmp/agw-schema.json, defs.LocalGateway): `cors` (`CorsSerde`) lives
-    # directly on the gateway, all fields optional. Origin list is
+    # call the MCP endpoint directly from browser JavaScript. Port 15000 is
+    # not published by default (see docker-compose.yml), so the playground
+    # is unreachable until it's temporarily published for local debugging;
+    # this block is left in place because it is harmless either way and
+    # correct once that port is deliberately published. The box itself never
+    # needs this: it talks to :3000 server-to-server (no browser, no Origin
+    # header, not subject to CORS at all). Schema check (v1.4.1, schema
+    # pinned at
+    # https://raw.githubusercontent.com/agentgateway/agentgateway/v1.4.1/schema/config.json,
+    # defs.LocalGateway): `cors` (`CorsSerde`) lives directly on the gateway,
+    # all fields optional. Origin list is
     # deliberately narrow (only the two loopback UI origins, not `*`) since
     # this endpoint fronts an authenticated GitHub MCP server; no
     # allowCredentials, since there is no cookie auth here for it to help.
@@ -93,7 +101,8 @@ gateways:
     cors:
       allowOrigins: ["http://127.0.0.1:15000", "http://localhost:15000"]
       allowMethods: ["GET", "POST", "DELETE", "OPTIONS"]
-      allowHeaders: ["content-type", "accept", "mcp-session-id", "mcp-protocol-version"]
+      allowHeaders:
+        ["content-type", "accept", "mcp-session-id", "mcp-protocol-version"]
       exposeHeaders: ["Mcp-Session-Id"]
   llm-gateway:
     port: 3001
@@ -218,7 +227,7 @@ routes:
               routes:
                 /v1/messages: messages
                 /v1/messages/count_tokens: anthropicTokenCount
-                '*': passthrough
+                "*": passthrough
 
   # API key. The gateway attaches the real credential; the box sends a
   # dummy ANTHROPIC_AUTH_TOKEN and never sees the key.
@@ -260,4 +269,4 @@ routes:
               routes:
                 /v1/messages: messages
                 /v1/messages/count_tokens: anthropicTokenCount
-                '*': passthrough
+                "*": passthrough

@@ -1,7 +1,9 @@
 # Host-side agentgateway. Start with: just gateway-up
 #
-# All ports bind 127.0.0.1 only. The box still reaches them via
-# host.boxlite.internal, which resolves to the host loopback proxy.
+# All published ports bind 127.0.0.1 only, which keeps them off the LAN —
+# but every running box reaches host loopback via host.boxlite.internal, so
+# any port published here is reachable from every box, not just the host.
+# See the admin-UI ports: entry below for why that matters.
 services:
   agentgateway:
     image: cr.agentgateway.dev/agentgateway:v1.4.1
@@ -10,7 +12,16 @@ services:
     ports:
       - "127.0.0.1:3000:3000"   # MCP
       - "127.0.0.1:3001:3001"   # LLM routes
-      - "127.0.0.1:15000:15000" # admin UI
+      # Admin UI (15000) is deliberately NOT published by default. Every
+      # running box reaches host loopback via host.boxlite.internal, so
+      # publishing this on 127.0.0.1 exposes it to every box, not just the
+      # host — and it is unauthenticated. Its /config_dump endpoint returns
+      # the live config with environment variables already expanded to their
+      # real values, so a sandboxed box could read ANTHROPIC_API_KEY straight
+      # back out of it; it also serves an unauthenticated POST /quitquitquit.
+      # Uncomment only for temporary local debugging while no untrusted box
+      # is running, then remove it again.
+      # - "127.0.0.1:15000:15000" # admin UI
     environment:
       # Required, or the UI binds container-loopback and the published port is dead.
       ADMIN_ADDR: 0.0.0.0:15000
@@ -35,8 +46,12 @@ services:
       # (see config.yaml's header comment for why). May legitimately be empty:
       # compose must still start without a GH_TOKEN in .env — the github
       # target then sends a useless bearer value and github-mcp keeps
-      # 401-ing, which is a degraded MCP target, not a gateway crash.
-      GH_TOKEN: "${GH_TOKEN:-}"
+      # 401-ing, which is a degraded MCP target, not a gateway crash. Falls
+      # back to GITHUB_TOKEN so a user who only sets that (as the box side
+      # accepts) still gets a working github MCP target instead of a silent
+      # 401; the trailing :- keeps this empty-but-present, never unset, when
+      # neither is set.
+      GH_TOKEN: "${GH_TOKEN:-${GITHUB_TOKEN:-}}"
     volumes:
       - ./config.yaml:/config.yaml:ro
     restart: unless-stopped
