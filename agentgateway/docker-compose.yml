@@ -23,7 +23,20 @@ services:
       # default here is what makes the var optional in .env: config.yaml requires
       # this to always resolve to something, so it must never reach the gateway
       # empty or unset.
-      AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST: "${AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST:-api.anthropic.com}"
+      # Format is host:port, no scheme (not https://...) and no path — hostOverride
+      # replaces only the authority, and a missing port or an added scheme/path
+      # crash-loops the gateway. The default below carries an explicit port for
+      # exactly this reason: a bare hostname with no port previously crash-looped.
+      AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST: "${AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST:-api.anthropic.com:443}"
+      # Bearer token agentgateway injects into every request to the `github`
+      # MCP target (config.yaml's requestHeaderModifier on that target) —
+      # github-mcp-server requires this on every HTTP-mode request, including
+      # initialize, regardless of its own GITHUB_PERSONAL_ACCESS_TOKEN env var
+      # (see config.yaml's header comment for why). May legitimately be empty:
+      # compose must still start without a GH_TOKEN in .env — the github
+      # target then sends a useless bearer value and github-mcp keeps
+      # 401-ing, which is a degraded MCP target, not a gateway crash.
+      GH_TOKEN: "${GH_TOKEN:-}"
     volumes:
       - ./config.yaml:/config.yaml:ro
     restart: unless-stopped
@@ -46,13 +59,14 @@ services:
     # keeps this reachable across the compose network regardless of upstream
     # ever changing that default.
     command: ["http", "--port", "9090", "--listen-host", "0.0.0.0"]
-    environment:
-      # May legitimately be empty: compose must still start without a GH_TOKEN
-      # in .env. The image's own auth check only fires for its stdio mode; in
-      # http mode with no token, tool calls needing GitHub auth simply fail
-      # per-request instead of the container refusing to start.
-      GITHUB_PERSONAL_ACCESS_TOKEN: "${GH_TOKEN:-}"
+    # No GITHUB_PERSONAL_ACCESS_TOKEN here. That env var is a stdio-mode
+    # credential; a live test proved this http-mode server ignores it
+    # entirely and enforces its own OAuth layer on every request instead — a
+    # bare curl with no Authorization header got a 401 on `initialize` with
+    # the token set. The PAT lives on agentgateway's side instead (GH_TOKEN
+    # above, injected as a Bearer header by config.yaml's `github` target
+    # policies), so this service needs no GitHub credential of its own.
     # Deliberately no `ports:` here. agentgateway reaches this over the
-    # compose network by service name/port alone, so the PAT-bearing server
-    # is unreachable from the host entirely. Do NOT publish a host port.
+    # compose network by service name/port alone, so this container stays
+    # unreachable from the host entirely. Do NOT publish a host port.
     restart: unless-stopped

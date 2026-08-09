@@ -40,15 +40,22 @@
 # form; if one of them gets enabled, give it the same explicit
 # `host`/`port`/`path` treatment rather than assuming a full URL parses.
 #
-# Bearer-token injection via `policies.requestHeaderModifier.set` (as used by
-# the upstream traffic-aws-agentcore example, and formerly by this file's
-# `github` target) is no longer exercised anywhere in this config: the
-# sibling `github-mcp` service holds the PAT itself via its own
-# GITHUB_PERSONAL_ACCESS_TOKEN environment variable, so agentgateway makes an
-# unauthenticated in-network call and never needs to inject a credential for
-# this target. That also removes the open question this file used to carry
-# about whether a GH_TOKEN reference in a header value actually gets
-# expanded at runtime — there's no header value to expand anymore.
+# RESOLVED (Task 12): the paragraph above was wrong. A raw request straight
+# to github-mcp, bypassing agentgateway entirely (no Authorization header),
+# got HTTP 401 on `initialize` with a Www-Authenticate: Bearer challenge.
+# github-mcp-server v1.8.0 enforces its own OAuth layer on every request in
+# http mode, including initialize, and does this regardless of whether its
+# own GITHUB_PERSONAL_ACCESS_TOKEN env var is set — that env var is a
+# stdio-mode credential only and has no effect in http mode. So the sibling
+# container never was an ambient credential; agentgateway must inject the
+# Authorization header itself. `policies.requestHeaderModifier.set` is
+# restored on the `github` target below for exactly that, sourced from
+# GH_TOKEN passed into agentgateway's own environment (docker-compose.yml,
+# not github-mcp's). GITHUB_PERSONAL_ACCESS_TOKEN was removed from the
+# github-mcp service (docker-compose.yml) since it's dead configuration
+# there. Expansion of a GH_TOKEN reference inside a header value is the same
+# raw-text substitution described in the warning at the top of this file —
+# no longer an open question, confirmed by the round-1 crash-loop.
 
 mcp:
   port: 3000
@@ -56,12 +63,20 @@ mcp:
     # GitHub's official MCP server image (ghcr.io/github/github-mcp-server),
     # run as the `github-mcp` sibling compose service in HTTP mode — see
     # docker-compose.yml — not GitHub's remote MCP endpoint (unreachable from
-    # this Docker host; see the file header comment). Plain in-network HTTP,
-    # no TLS and no Authorization header: `github-mcp` holds the PAT itself
-    # via its own GITHUB_PERSONAL_ACCESS_TOKEN environment variable, set from
-    # GH_TOKEN in .env. Path is `/`: github-mcp-server's HTTP mode mounts its
-    # MCP routes at the router root, not at `/mcp`.
+    # this Docker host; see the file header comment). Plain in-network HTTP
+    # (no TLS needed for an in-network hop), but WITH an injected
+    # Authorization header: github-mcp-server enforces its own OAuth layer on
+    # every http-mode request, including initialize, and ignores its own
+    # GITHUB_PERSONAL_ACCESS_TOKEN entirely in this mode (see the file header
+    # comment) — so agentgateway must supply the bearer token itself. Value
+    # comes from GH_TOKEN, passed into agentgateway's own environment
+    # (docker-compose.yml), not github-mcp's. Path is `/`: github-mcp-server's
+    # HTTP mode mounts its MCP routes at the router root, not at `/mcp`.
     - name: github
+      policies:
+        requestHeaderModifier:
+          set:
+            Authorization: "Bearer $GH_TOKEN"
       mcp:
         host: github-mcp
         port: 9090
@@ -179,6 +194,17 @@ binds:
                   # backend above — it must keep forwarding to Anthropic untouched.
                   hostOverride: "$AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST"
                   policies:
+                    # Both the default (api.anthropic.com:443) and any custom
+                    # override (e.g. a LiteLLM endpoint) speak TLS, never
+                    # plain HTTP — hostOverride only replaces host:port, it
+                    # does not imply a scheme. Without this, agentgateway
+                    # sends plain HTTP to whatever hostOverride names, which
+                    # a TLS-only upstream answers with a 400 from its own TLS
+                    # frontend (nginx, etc). An empty object means "use TLS
+                    # with default settings". Do not add insecure or
+                    # insecureHost here: a certificate that fails to verify
+                    # is for the operator to fix, not to silence.
+                    backendTLS: {}
                     ai:
                       routes:
                         /v1/messages: messages
