@@ -21,7 +21,7 @@ just exec               # open a session in the running box (alias: just shell)
 just list               # list running boxes across every box name (see below), forwarding args to `boxlite list`
 just down               # stop and remove the box
 just gateway-up/down/logs # manage the host-side agentgateway
-just gateway-ui-htpasswd # generate credentials for the (opt-in) admin UI, see below
+just gateway-ui-htpasswd # change the admin UI's default credentials, see below
 just registry-up/down   # manage the local docker-compose registry directly
 just registry-login     # log in to an authenticated registry (e.g. ECR), see below
 just install/uninstall  # symlink the cb wrapper onto PATH (see below)
@@ -127,17 +127,23 @@ that's not viable until upstream lands it.
   to every box, not just the host. It's commented out with a warning to that effect and should
   only be published temporarily for local debugging while no untrusted box is running. Loopback
   alone is not the security boundary here — a box sits inside it — publishing on loopback is
-  what actually gates reachability from a box. A separate, opt-in admin UI (config viewer + MCP
-  tool playground) is available on its own port (15001) behind HTTP basic auth — commented
+  what actually gates reachability from a box. A separate admin UI (config viewer + MCP tool
+  playground) is on by default on its own port (15001) behind HTTP basic auth — the
   `ui-gateway`/`ui:` blocks in `config.yaml` and matching `ports:`/`volumes:` entries in
-  `docker-compose.yml`, all ships-disabled for the same reason a missing htpasswd file
-  shouldn't break a fresh clone's `just gateway-up`. `just gateway-ui-htpasswd` generates the
-  htpasswd file (gitignored); `ui.policies.basicAuth.mode: strict` is required rather than
-  the schema's `optional` default, since `optional` would wave through any request with no
-  credentials at all, which defeats the point of auth in front of a loopback port every box
-  can also reach. The `htpasswd` field always uses the `{file: ...}` form, never an inline
-  hash string — agentgateway expands every dollar-sign-plus-word token in the raw config text
-  (see `config.yaml`'s header comment), and htpasswd hashes are full of dollar-sign-prefixed
+  `docker-compose.yml`. Unlike `:15000`, this port ships live: `just gateway-up` copies the
+  tracked `agentgateway/htpasswd.default` template to the gitignored, live
+  `agentgateway/htpasswd` on first run only (an already-present file, e.g. one with a changed
+  password, is left alone), so a fresh clone gets a working login — `admin` / `agentgateway` —
+  with no setup step. That default is a known, guessable credential; it's accepted only because
+  this repo's boxes typically don't mount the repo itself, so a box has no other way to read
+  the password or hash off disk. `just gateway-ui-htpasswd` overwrites the live htpasswd file
+  (never the tracked template, so a password change never leaves a tracked file modified) to
+  change it. `ui.policies.basicAuth.mode: strict` is required rather than the schema's
+  `optional` default, since `optional` would wave through any request with no credentials at
+  all, which defeats the point of auth in front of a loopback port every box can also reach.
+  The `htpasswd` field always uses the `{file: ...}` form, never an inline hash string —
+  agentgateway expands every dollar-sign-plus-word token in the raw config text (see
+  `config.yaml`'s header comment), and htpasswd hashes are full of dollar-sign-prefixed
   segments that would otherwise be misread as environment-variable references and crash-loop
   the gateway. The `/api` route carries `backendAuth` and
   attaches `$ANTHROPIC_API_KEY` host-side (its upstream is configurable via

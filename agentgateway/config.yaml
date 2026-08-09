@@ -78,15 +78,12 @@ gateways:
     protocol: HTTP
     # CORS exists solely so the admin UI's "tool playground" — served from
     # 127.0.0.1:15001, a different origin than this gateway's :3000 — can
-    # call the MCP endpoint directly from browser JavaScript. That UI is
-    # opt-in and ships disabled (see the commented `ui-gateway` entry in
-    # `gateways:` below and the commented `ui:` block further down), so the
-    # playground is unreachable until someone deliberately enables it (see
-    # README.md "Admin UI") and, even then, only after a basic-auth login.
-    # This block is left in place because it is harmless either way and
-    # correct once that UI is deliberately enabled. The box itself never
-    # needs this: it talks to :3000 server-to-server (no browser, no Origin
-    # header, not subject to CORS at all). Schema check (v1.4.1, schema
+    # call the MCP endpoint directly from browser JavaScript. That UI is on
+    # by default (see the `ui-gateway` entry in `gateways:` below and the
+    # `ui:` block further down) but only reachable after a basic-auth login
+    # (see README.md "Admin UI"). The box itself never needs this: it talks
+    # to :3000 server-to-server (no browser, no Origin header, not subject
+    # to CORS at all). Schema check (v1.4.1, schema
     # pinned at
     # https://raw.githubusercontent.com/agentgateway/agentgateway/v1.4.1/schema/config.json,
     # defs.LocalGateway): `cors` (`CorsSerde`) lives directly on the gateway,
@@ -109,43 +106,49 @@ gateways:
   llm-gateway:
     port: 3001
     protocol: HTTP
-  # Admin UI gateway — OPT-IN, ships disabled. Serves the config viewer and
-  # MCP tool playground behind HTTP basic auth (see the commented `ui:` block
-  # below), on a port separate from the raw, unauthenticated admin API that
-  # this repo deliberately keeps unpublished (ADMIN_ADDR, port 15000, above).
-  # Enable steps: README.md "Admin UI" — in short: `just gateway-ui-htpasswd`,
-  # then uncomment this entry, the `ui:` block below, and the matching
-  # `ports:`/`volumes:` entries in docker-compose.yml, then `just gateway-up`.
-  # ui-gateway:
-  #   port: 15001
-  #   protocol: HTTP
+  # Admin UI gateway — on by default. Serves the config viewer and MCP tool
+  # playground behind HTTP basic auth (see the `ui:` block below), on a port
+  # separate from the raw, unauthenticated admin API that this repo
+  # deliberately keeps unpublished (ADMIN_ADDR, port 15000, above). A fresh
+  # clone gets a working login with no setup step: `just gateway-up` bootstraps
+  # agentgateway/htpasswd from the tracked agentgateway/htpasswd.default
+  # template (see justfile) if it doesn't already exist, so this comes up
+  # authenticated on the very first run. Change the password at any time with
+  # `just gateway-ui-htpasswd [username]`, which overwrites the live,
+  # gitignored htpasswd file without touching the tracked template.
+  ui-gateway:
+    port: 15001
+    protocol: HTTP
 
-# Admin UI — OPT-IN, ships disabled (see the commented `ui-gateway` entry in
-# `gateways:` above). Attaches the UI to that gateway with HTTP basic auth in
-# front of it: any port docker-compose.yml publishes is reachable from every
-# running box via host.boxlite.internal, not just the host (see that file's
-# admin-UI ports comment for the full story), so an unauthenticated UI would
-# hand a sandboxed box the live config. `mode: strict` is required, not just
-# `basicAuth:` on its own — the schema default mode is `optional`, which lets
-# a request through when it carries no credentials at all, which would
-# defeat having auth in front of this in the first place. `htpasswd` MUST
-# use the `{file: ...}` form below, never an inline string: Apache htpasswd
-# hashes contain dollar-sign-prefixed segments (e.g. one for apr1, one for
-# bcrypt) and this loader expands every dollar-sign-plus-word token found
-# anywhere in the raw config text (see the file header warning) — an inline
-# hash would make it look up a nonexistent environment variable by that
-# segment's name and crash-loop the gateway. Enable steps: README.md
-# "Admin UI" — in short: `just gateway-ui-htpasswd`, then uncomment this
-# block, the `ui-gateway` entry above, and the matching `ports:`/`volumes:`
-# entries in docker-compose.yml, then `just gateway-up`.
-# ui:
-#   gateways: ui-gateway
-#   policies:
-#     basicAuth:
-#       htpasswd:
-#         file: /etc/agentgateway/htpasswd
-#       realm: agentgateway admin
-#       mode: strict
+# Admin UI — on by default, behind HTTP basic auth. Any port docker-compose.yml
+# publishes is reachable from every running box via host.boxlite.internal, not
+# just the host (see that file's admin-UI ports comment for the full story),
+# so an unauthenticated UI would hand a sandboxed box the live config. `mode:
+# strict` is required, not just `basicAuth:` on its own — the schema default
+# mode is `optional`, which lets a request through when it carries no
+# credentials at all, which would defeat having auth in front of this in the
+# first place. `htpasswd` MUST use the `{file: ...}` form below, never an
+# inline string: Apache htpasswd hashes contain dollar-sign-prefixed segments
+# (e.g. one for apr1, one for bcrypt) and this loader expands every
+# dollar-sign-plus-word token found anywhere in the raw config text (see the
+# file header warning) — an inline hash would make it look up a nonexistent
+# environment variable by that segment's name and crash-loop the gateway.
+#
+# The live credential is a KNOWN DEFAULT (username admin, see
+# agentgateway/htpasswd.default) until someone changes it with `just
+# gateway-ui-htpasswd`. That default is guessable by anything with network
+# reach to this port — accepted here because the microVMs this repo boots
+# typically do not mount this repo, so a box has no way to read the password
+# or the hash off disk; it is not a substitute for changing the password
+# before exposing this port more broadly.
+ui:
+  gateways: ui-gateway
+  policies:
+    basicAuth:
+      htpasswd:
+        file: /etc/agentgateway/htpasswd
+      realm: agentgateway admin
+      mode: strict
 
 mcp:
   # Attaches this MCP config to mcp-gateway (port 3000, see `gateways:`

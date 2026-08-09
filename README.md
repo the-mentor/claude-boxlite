@@ -99,7 +99,7 @@ just down              # stop and remove the box
 just gateway-up        # start the host-side agentgateway (MCP + Anthropic routes)
 just gateway-down      # stop it
 just gateway-logs      # follow its logs
-just gateway-ui-htpasswd # generate credentials for the (opt-in) admin UI, see below
+just gateway-ui-htpasswd # change the admin UI's default credentials, see below
 ```
 
 Use `just up-dev` the first time (or after changing the image); use `just up` for a fast
@@ -123,44 +123,50 @@ to "the host only." That's why the admin UI's port is not published by default �
 | `:3001/claude` | Anthropic passthrough — your subscription OAuth token goes upstream untouched |
 | `:3001/api` | Anthropic-Messages-API keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host; upstream defaults to `api.anthropic.com` but is configurable via `AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST` (e.g. for a LiteLLM key) |
 | `:15000/ui` | raw admin UI — **not published by default** (commented out in `agentgateway/docker-compose.yml`); its `/config_dump` is unauthenticated and returns real credential values, so publishing it hands every box a way to read `ANTHROPIC_API_KEY` back out. Uncomment the port temporarily for local debugging only while no untrusted box is running |
-| `:15001/ui` | password-protected admin UI — **opt-in, not published by default**; same UI and tool playground, behind HTTP basic auth, on a port meant to be published for real use. See "Admin UI" below |
+| `:15001/ui` | password-protected admin UI — **on by default**; same UI and tool playground, behind HTTP basic auth. See "Admin UI" below |
 
 (`:3000` and `:3001` are two separately named gateways in `agentgateway/config.yaml`'s
 `gateways:` map — `mcp-gateway` and `llm-gateway` — not one gateway with two binds; the
-opt-in `:15001` admin UI is a third, `ui-gateway`.) `:3000` also allows CORS from the admin
-UI's tool playground (`127.0.0.1:15001`) so it can call the MCP endpoint directly from
-browser JavaScript once that UI is enabled (see below); the box itself talks to it
-server-to-server and is unaffected either way.
+`:15001` admin UI is a third, `ui-gateway`.) `:3000` also allows CORS from the admin UI's
+tool playground (`127.0.0.1:15001`) so it can call the MCP endpoint directly from browser
+JavaScript; the box itself talks to it server-to-server and is unaffected either way.
 
 ### Admin UI
 
-The admin UI (config viewer + MCP tool playground) ships **disabled**, on its own port
-(`15001`), separate from the raw admin API (`15000`) covered above. It's opt-in and behind
-HTTP basic auth rather than on-by-default, for the same reason `:15000` stays unpublished:
-`host.boxlite.internal` means any port published in `agentgateway/docker-compose.yml` is
-reachable from every running box, not just the host, so an unauthenticated UI would hand a
-sandboxed box the same live-config read that got `:15000` unpublished in the first place. A
-password in front of it means a box without the credential just gets a 401.
+The admin UI (config viewer + MCP tool playground) is **on by default**, on its own port
+(`15001`), separate from the raw admin API (`15000`) covered above. `:15000` stays
+unpublished because it's unauthenticated — `host.boxlite.internal` means any port published
+in `agentgateway/docker-compose.yml` is reachable from every running box, not just the host,
+and an unauthenticated UI would hand a sandboxed box the same live-config read. `:15001` is
+safe to publish instead because it sits behind HTTP basic auth: a box without the credential
+just gets a 401.
 
-To enable it:
+`just gateway-up` bootstraps that credential with no setup step: on first run it copies the
+tracked template `agentgateway/htpasswd.default` to `agentgateway/htpasswd` (gitignored) only
+if the latter doesn't already exist, so the UI comes up immediately at
+`http://127.0.0.1:15001` with the **default login `admin` / `agentgateway`**.
+
+**That default is a known, published credential.** Anything with network reach to `:15001` —
+which, per the `host.boxlite.internal` note above, includes every box this repo boots — can
+look it up and log in. It is accepted here because this repo's boxes typically do not mount
+the repo itself, so a box has no way to read the password or the htpasswd hash off disk
+another way; it is not a substitute for changing the password before relying on this port for
+anything sensitive, or before publishing it more broadly than `127.0.0.1`.
+
+Change it at any time with:
 
 ```bash
-just gateway-ui-htpasswd        # prompts for a password, writes agentgateway/htpasswd (gitignored)
+just gateway-ui-htpasswd            # prompts for a new password for user "admin"
+just gateway-ui-htpasswd otheruser  # or a different username
 ```
 
-Then uncomment, in both files, the four blocks marked with an "OPT-IN, ships disabled"
-comment — the `ui-gateway` gateway entry and the `ui:` block in `agentgateway/config.yaml`,
-and the matching `ports:` and `volumes:` entries in `agentgateway/docker-compose.yml` — and
-restart:
+This overwrites the live `agentgateway/htpasswd` only — the tracked
+`agentgateway/htpasswd.default` template is never touched, so changing your password never
+leaves a tracked file showing as modified. Then restart for it to take effect:
 
 ```bash
 just gateway-down && just gateway-up
 ```
-
-The UI is then at `http://127.0.0.1:15001`, prompting for the username/password
-`gateway-ui-htpasswd` generated (default username `admin`; pass a different one as its
-argument). Re-run `gateway-ui-htpasswd` at any time to change the password — it overwrites
-`agentgateway/htpasswd`.
 
 It is long-lived and restarts with Docker; `just up`/`up-dev` do not start it. If
 `ANTHROPIC_BASE_URL` points at it and it is not running, the box will fail to reach Anthropic

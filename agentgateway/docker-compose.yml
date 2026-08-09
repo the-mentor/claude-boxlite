@@ -23,16 +23,16 @@ services:
       # is running, then remove it again.
       # - "127.0.0.1:15000:15000" # admin UI
       #
-      # Password-protected admin UI (15001) — OPT-IN, ships disabled. Unlike
-      # the raw admin API above, this port serves the UI (config viewer +
-      # MCP tool playground) behind HTTP basic auth (config.yaml's commented
-      # `ui-gateway`/`ui:` blocks), so it stays safe to publish even though
-      # every running box can also reach it via host.boxlite.internal — a
-      # box without the password just gets a 401. Enable: run `just
-      # gateway-ui-htpasswd`, uncomment this line, the matching volumes:
-      # entry below, and the `ui-gateway`/`ui:` blocks in config.yaml, then
-      # `just gateway-up` again. See README.md "Admin UI".
-      # - "127.0.0.1:15001:15001" # admin UI (password-protected)
+      # Password-protected admin UI (15001) — on by default. Unlike the raw
+      # admin API above, this port serves the UI (config viewer + MCP tool
+      # playground) behind HTTP basic auth (config.yaml's `ui-gateway`/`ui:`
+      # blocks), so it stays safe to publish even though every running box
+      # can also reach it via host.boxlite.internal — a box without the
+      # password just gets a 401. `just gateway-up` bootstraps the htpasswd
+      # file below from a tracked default template on first run, so this
+      # comes up with a working (default) login with no setup step. See
+      # README.md "Admin UI" to change the password.
+      - "127.0.0.1:15001:15001" # admin UI (password-protected)
     environment:
       # Required, or the UI binds container-loopback and the published port is dead.
       ADMIN_ADDR: 0.0.0.0:15000
@@ -65,11 +65,16 @@ services:
       GH_TOKEN: "${GH_TOKEN:-${GITHUB_TOKEN:-}}"
     volumes:
       - ./config.yaml:/config.yaml:ro
-      # Htpasswd file backing the password-protected admin UI above —
-      # generate it with `just gateway-ui-htpasswd` (writes agentgateway/
-      # htpasswd, gitignored — it's a credential, never commit it). Mounted
-      # read-only at the path config.yaml's commented `ui:` block expects.
-      # - ./htpasswd:/etc/agentgateway/htpasswd:ro
+      # Htpasswd file backing the password-protected admin UI above. `just
+      # gateway-up` copies the tracked agentgateway/htpasswd.default template
+      # here on first run if this file doesn't already exist yet, so a fresh
+      # clone gets the default admin/agentgateway login with no setup step;
+      # changing the password with `just gateway-ui-htpasswd` overwrites only
+      # this file, never the template, so a password change never leaves a
+      # tracked file modified. This path is gitignored — it's a live
+      # credential, never commit it. Mounted read-only at the path
+      # config.yaml's `ui:` block expects.
+      - ./htpasswd:/etc/agentgateway/htpasswd:ro
     restart: unless-stopped
     # Not a correctness dependency — agentgateway's MCP targets connect lazily,
     # so it starts fine before github-mcp is ready. This only orders `docker

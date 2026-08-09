@@ -137,8 +137,16 @@ registry-down:
     {{compose}} down
 
 # Start the host-side agentgateway (docker compose). Long-lived: boxes come and
-# go, this stays up. Not started by `just up`/`up-dev`.
+# go, this stays up. Not started by `just up`/`up-dev`. Bootstraps
+# agentgateway/htpasswd (gitignored, backs the admin UI's basic auth) from the
+# tracked agentgateway/htpasswd.default template on first run only — if the
+# live file already exists (e.g. a changed password), it is left alone, so a
+# fresh clone gets a working default login with no setup step and a password
+# change never leaves a tracked file modified.
 gateway-up:
+    #!/usr/bin/env sh
+    set -eu
+    [ -f agentgateway/htpasswd ] || cp agentgateway/htpasswd.default agentgateway/htpasswd
     {{gateway}} up -d
 
 # Stop the host-side agentgateway
@@ -149,10 +157,13 @@ gateway-down:
 gateway-logs:
     {{gateway}} logs -f
 
-# Generate agentgateway/htpasswd for the password-protected admin UI (see
-# README.md "Admin UI" for the full enable steps). Prompts for the password
-# interactively via `htpasswd`/`openssl` themselves (hidden input, not
-# echoed, never passed as an argument — that would land in both shell
+# Change the password for the admin UI (on by default at 127.0.0.1:15001, see
+# README.md "Admin UI"), overwriting agentgateway/htpasswd — the live,
+# gitignored file `just gateway-up` bootstraps from the tracked
+# agentgateway/htpasswd.default template — without touching that template, so
+# changing the password never leaves a tracked file modified. Prompts for the
+# password interactively via `htpasswd`/`openssl` themselves (hidden input,
+# not echoed, never passed as an argument — that would land in both shell
 # history and `ps` output). Prefers `htpasswd -B` (bcrypt, apache2-utils);
 # falls back to `openssl passwd -apr1` if htpasswd isn't installed.
 # Usage: just gateway-ui-htpasswd [username]
