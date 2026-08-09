@@ -156,7 +156,7 @@ gateway-down:
 gateway-logs:
     {{gateway}} logs -f
 
-# Change the password for the admin UI (on by default at 127.0.0.1:15001, see
+# Change the password for the admin UI (on by default at 127.0.0.1:15000, see
 # README.md "Admin UI"), overwriting agentgateway/htpasswd — the live,
 # gitignored file `just gateway-up` bootstraps from the tracked
 # agentgateway/htpasswd.default template — without touching that template, so

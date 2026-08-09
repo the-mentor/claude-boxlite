@@ -119,7 +119,7 @@ that's not viable until upstream lands it.
   `config.yaml` declares two named gateways under its top-level `gateways:` map (the older
   `binds:`/`mcp.port` shape is deprecated) — `mcp-gateway` on `:3000`, which is what the box's
   baked `/root/.claude.json` already points at, and `llm-gateway` on `:3001` for the two
-  Anthropic routes — both loopback-bound. The admin UI (`:15000`) binds loopback
+  Anthropic routes — both loopback-bound. The admin UI (`:15001`) binds loopback
   container-internally (`ADMIN_ADDR`) but is NOT published in `docker-compose.yml` by default:
   every running box reaches host loopback via `host.boxlite.internal`, so publishing it would
   expose its unauthenticated `/config_dump` (which contains real credential values, since
@@ -128,9 +128,9 @@ that's not viable until upstream lands it.
   only be published temporarily for local debugging while no untrusted box is running. Loopback
   alone is not the security boundary here — a box sits inside it — publishing on loopback is
   what actually gates reachability from a box. A separate admin UI (config viewer + MCP tool
-  playground) is on by default on its own port (15001) behind HTTP basic auth — the
+  playground) is on by default on its own port (15000) behind HTTP basic auth — the
   `ui-gateway`/`ui:` blocks in `config.yaml` and matching `ports:`/`volumes:` entries in
-  `docker-compose.yml`. Unlike `:15000`, this port ships live: `just gateway-up` copies the
+  `docker-compose.yml`. Unlike `:15001`, this port ships live: `just gateway-up` copies the
   tracked `agentgateway/htpasswd.default` template to the gitignored, live
   `agentgateway/htpasswd` on first run only (an already-present file, e.g. one with a changed
   password, is left alone), so a fresh clone gets a working login — `admin` / `agentgateway` —

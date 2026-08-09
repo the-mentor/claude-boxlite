@@ -12,7 +12,7 @@ services:
     ports:
       - "127.0.0.1:3000:3000"   # MCP
       - "127.0.0.1:3001:3001"   # LLM routes
-      # Admin UI (15000) is deliberately NOT published by default. Every
+      # Admin UI (15001) is deliberately NOT published by default. Every
       # running box reaches host loopback via host.boxlite.internal, so
       # publishing this on 127.0.0.1 exposes it to every box, not just the
       # host — and it is unauthenticated. Its /config_dump endpoint returns
@@ -21,9 +21,9 @@ services:
       # back out of it; it also serves an unauthenticated POST /quitquitquit.
       # Uncomment only for temporary local debugging while no untrusted box
       # is running, then remove it again.
-      # - "127.0.0.1:15000:15000" # admin UI
+      # - "127.0.0.1:15001:15001" # admin UI
       #
-      # Password-protected admin UI (15001) — on by default. Unlike the raw
+      # Password-protected admin UI (15000) — on by default. Unlike the raw
       # admin API above, this port serves the UI (config viewer + MCP tool
       # playground) behind HTTP basic auth (config.yaml's `ui-gateway`/`ui:`
       # blocks), so it stays safe to publish even though every running box
@@ -32,10 +32,10 @@ services:
       # file below from a tracked default template on first run, so this
       # comes up with a working (default) login with no setup step. See
       # README.md "Admin UI" to change the password.
-      - "127.0.0.1:15001:15001" # admin UI (password-protected)
+      - "127.0.0.1:15000:15000" # admin UI (password-protected)
     environment:
       # Required, or the UI binds container-loopback and the published port is dead.
-      ADMIN_ADDR: 0.0.0.0:15000
+      ADMIN_ADDR: 0.0.0.0:15001
       # May legitimately be empty: a subscription user has no API key, and the
       # /claude passthrough route does not need one.
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"

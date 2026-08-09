@@ -77,7 +77,7 @@ gateways:
     port: 3000
     protocol: HTTP
     # CORS exists solely so the admin UI's "tool playground" — served from
-    # 127.0.0.1:15001, a different origin than this gateway's :3000 — can
+    # 127.0.0.1:15000, a different origin than this gateway's :3000 — can
     # call the MCP endpoint directly from browser JavaScript. That UI is on
     # by default (see the `ui-gateway` entry in `gateways:` below and the
     # `ui:` block further down) but only reachable after a basic-auth login
@@ -98,7 +98,7 @@ gateways:
     # it back on subsequent requests (header matching is case-insensitive,
     # both forms kept for clarity with what's actually sent each direction).
     cors:
-      allowOrigins: ["http://127.0.0.1:15001", "http://localhost:15001"]
+      allowOrigins: ["http://127.0.0.1:15000", "http://localhost:15000"]
       allowMethods: ["GET", "POST", "DELETE", "OPTIONS"]
       allowHeaders:
         ["content-type", "accept", "mcp-session-id", "mcp-protocol-version"]
@@ -109,7 +109,7 @@ gateways:
   # Admin UI gateway — on by default. Serves the config viewer and MCP tool
   # playground behind HTTP basic auth (see the `ui:` block below), on a port
   # separate from the raw, unauthenticated admin API that this repo
-  # deliberately keeps unpublished (ADMIN_ADDR, port 15000, above). A fresh
+  # deliberately keeps unpublished (ADMIN_ADDR, port 15001, above). A fresh
   # clone gets a working login with no setup step: `just gateway-up` bootstraps
   # agentgateway/htpasswd from the tracked agentgateway/htpasswd.default
   # template (see justfile) if it doesn't already exist, so this comes up
@@ -117,7 +117,7 @@ gateways:
   # `just gateway-ui-htpasswd [username]`, which overwrites the live,
   # gitignored htpasswd file without touching the tracked template.
   ui-gateway:
-    port: 15001
+    port: 15000
     protocol: HTTP
 
 # Admin UI — on by default, behind HTTP basic auth. Any port docker-compose.yml
