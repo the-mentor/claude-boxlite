@@ -172,6 +172,12 @@ binds:
                   name: claude-keyed
                   provider:
                     anthropic: {}
+                  # Upstream host for this route only, defaulted in docker-compose.yml
+                  # (env var ANTHROPIC_UPSTREAM_HOST) so a non-Anthropic key (e.g.
+                  # LiteLLM) can be pointed at its actual provider instead of
+                  # api.anthropic.com. Do not add this to the /claude passthrough
+                  # backend above — it must keep forwarding to Anthropic untouched.
+                  hostOverride: "$ANTHROPIC_UPSTREAM_HOST"
                   policies:
                     ai:
                       routes:

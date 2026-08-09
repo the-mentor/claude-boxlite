@@ -117,7 +117,7 @@ host loopback proxy, so nothing is exposed to your network.
 |---|---|
 | `:3000/mcp` | multiplexed MCP tools (`github` live, proxied to a sibling `github-mcp` container — not GitHub's remote endpoint; others commented in `agentgateway/config.yaml`) |
 | `:3001/claude` | Anthropic passthrough — your subscription OAuth token goes upstream untouched |
-| `:3001/api` | Anthropic keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host |
+| `:3001/api` | Anthropic-Messages-API keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host; upstream defaults to `api.anthropic.com` but is configurable via `ANTHROPIC_UPSTREAM_HOST` (e.g. for a LiteLLM key) |
 | `:15000/ui` | admin UI |
 
 It is long-lived and restarts with Docker; `just up`/`up-dev` do not start it. If
@@ -127,6 +127,12 @@ It is long-lived and restarts with Docker; `just up`/`up-dev` do not start it. I
 The `/mcp` half works in every auth mode. Only the keyed mode keeps a credential off the VM:
 in subscription mode Claude Code must hold the OAuth token to send it, so that mode buys
 observability and a single egress point, not credential custody.
+
+If `ANTHROPIC_API_KEY` isn't actually an Anthropic key — e.g. a LiteLLM key — set
+`ANTHROPIC_UPSTREAM_HOST` in `.env` to the bare host it should be sent to instead (no scheme,
+no path). This only changes where the `/api` route forwards to; it's unrelated to
+`ANTHROPIC_BASE_URL`, which is where the box itself sends traffic (always the gateway, in
+this mode).
 
 **Troubleshooting**
 

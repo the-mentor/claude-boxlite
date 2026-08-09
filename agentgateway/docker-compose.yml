@@ -17,6 +17,13 @@ services:
       # May legitimately be empty: a subscription user has no API key, and the
       # /claude passthrough route does not need one.
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      # Upstream host for the /api keyed route only (config.yaml's `hostOverride`
+      # on the claude-keyed backend) — lets a LiteLLM (or other Anthropic-Messages-
+      # compatible) key route to something other than Anthropic directly. The
+      # default here is what makes the var optional in .env: config.yaml requires
+      # this to always resolve to something, so it must never reach the gateway
+      # empty or unset.
+      ANTHROPIC_UPSTREAM_HOST: "${ANTHROPIC_UPSTREAM_HOST:-api.anthropic.com}"
     volumes:
       - ./config.yaml:/config.yaml:ro
     restart: unless-stopped
