@@ -18,7 +18,20 @@ disk_size  := "10"
 # which is what lets a terminal tell Shift+Enter apart from plain Enter —
 # without it, Shift+Enter silently behaves like Enter inside the box even in
 # terminals (iTerm2, WezTerm, Warp) where it works fine outside the box.
-passthrough_vars := "CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_MODEL GH_TOKEN GITHUB_TOKEN GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM KITTY_WINDOW_ID WEZTERM_EXECUTABLE ITERM_SESSION_ID WT_SESSION VTE_VERSION"
+#
+# Which LLM auth vars reach the box. Precedence: a subscription OAuth token wins
+# and travels with ANTHROPIC_BASE_URL if one is set (the /claude passthrough
+# route), or goes direct if not. Otherwise a set ANTHROPIC_BASE_URL means keyed
+# gateway mode via /api, and the real API key deliberately stays on the host —
+# note it is absent from that branch. That absence is the whole point.
+llm_vars := if env_var_or_default("CLAUDE_CODE_OAUTH_TOKEN", "") != "" {
+    "CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_BASE_URL"
+  } else if env_var_or_default("ANTHROPIC_BASE_URL", "") != "" {
+    "ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL"
+  } else {
+    "ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN"
+  }
+passthrough_vars := llm_vars + " ANTHROPIC_MODEL GH_TOKEN GITHUB_TOKEN GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM KITTY_WINDOW_ID WEZTERM_EXECUTABLE ITERM_SESSION_ID WT_SESSION VTE_VERSION"
 compose    := "docker compose -f local-development/registry/docker-compose.yml"
 gateway    := "docker compose -f agentgateway/docker-compose.yml --env-file .env"
 
