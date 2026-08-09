@@ -1,102 +1,27 @@
 # WARNING: agentgateway's config loader expands every dollar-sign-plus-word
-# token found anywhere in this file's raw text, including inside comments,
-# and aborts the whole process if any one of them has no matching
-# environment variable. No comment below may contain a dollar sign followed
-# by a word — spell variable names out plainly (e.g. write GH_TOKEN, not a
-# dollar-prefixed reference) or the gateway crash-loops on startup. This bit
-# us once already; do not step on it again.
+# token found anywhere in this file's raw text, INCLUDING COMMENTS, and
+# aborts the whole process if any one has no matching environment variable.
+# Never write a dollar-sign-prefixed name in a comment — spell it out plainly
+# (e.g. GH_TOKEN, not a dollar-prefixed reference) or the gateway crash-loops
+# on startup. Do not add a yaml-language-server schema directive at the top
+# of this file for the same reason (that directive is itself dollar-prefixed).
 #
-# The line 1 `yaml-language-server: schema=...` editor directive that used to
-# open this file was removed for exactly this reason: the loader tried to
-# resolve "schema" as an environment variable and crash-looped on it. Do not
-# restore that directive.
+# Host-side agentgateway for claude-boxlite. Secrets are environment-variable
+# references only — never paste a literal credential here. Tracked in git.
 #
-# Host-side agentgateway for claude-boxlite.
-# Secrets are environment-variable references only — never paste a literal
-# credential here.
-# This file is tracked in git.
-#
-# Schema check (v1.4.1, schema pinned at
-# https://raw.githubusercontent.com/agentgateway/agentgateway/v1.4.1/schema/config.json,
-# defs.LocalMcpTarget): a remote target is `targets[].mcp.{host}` or
-# `targets[].mcp.{host,port,path}` — `unevaluatedProperties: false` on that
-# object rules out a bare `url:` or a `headers:` map (both used by the
-# pre-schema-check draft of this file).
-#
-# RESOLVED (Task 10): the `github` target below no longer points at GitHub's
-# remote MCP endpoint at all. Task 6 proved the Docker host cannot complete a
-# TLS handshake to api.githubcopilot.com under any circumstances (reproduced
-# with a bare curl and an unrelated container, zero agentgateway involvement)
-# — a network condition, not a config bug, so no amount of retrying the
-# target shape here would have fixed it. `github` now points at
-# `ghcr.io/github/github-mcp-server` running as a sibling compose service in
-# HTTP mode (see docker-compose.yml), reached over the compose network in
-# plain HTTP. That removes both open questions this paragraph used to track
-# for that target: no TLS is involved, so backend TLS enablement is moot, and
-# the explicit `host`/`port`/`path` form is used directly (no full URL under
-# `host:` to worry about parsing).
-#
-# The single-string `host`-with-path-and-scheme question is NOT resolved in
-# general — it's just moot for `github` now. The three disabled sibling
-# targets below (terraform, playwright, fetch) still use that unconfirmed
-# form; if one of them gets enabled, give it the same explicit
-# `host`/`port`/`path` treatment rather than assuming a full URL parses.
-#
-# RESOLVED (Task 12): a raw request straight to github-mcp, bypassing
-# agentgateway entirely (no Authorization header),
-# got HTTP 401 on `initialize` with a Www-Authenticate: Bearer challenge.
-# github-mcp-server v1.8.0 enforces its own OAuth layer on every request in
-# http mode, including initialize, and does this regardless of whether its
-# own GITHUB_PERSONAL_ACCESS_TOKEN env var is set — that env var is a
-# stdio-mode credential only and has no effect in http mode. So the sibling
-# container never was an ambient credential; agentgateway must inject the
-# Authorization header itself. `policies.requestHeaderModifier.set` is
-# restored on the `github` target below for exactly that, sourced from
-# GH_TOKEN passed into agentgateway's own environment (docker-compose.yml,
-# not github-mcp's). GITHUB_PERSONAL_ACCESS_TOKEN was removed from the
-# github-mcp service (docker-compose.yml) since it's dead configuration
-# there. Expansion of a GH_TOKEN reference inside a header value is the same
-# raw-text substitution described in the warning at the top of this file —
-# no longer an open question, confirmed by the round-1 crash-loop.
-#
-# RESOLVED (Task 13): migrated off `binds:` + `mcp.port` onto `gateways:` +
-# top-level `routes:`. `binds` and `mcp.port` are both documented as
-# deprecated in the v1.4.1 schema (`gateways`/`routes` are the recommended
-# replacement) and the admin UI flagged this file for using the legacy form
-# with no `gateways` at all. `gateways` is a map of name -> listener config
-# (port/protocol/tls/listeners); `mcp:` and each top-level `routes[]` entry
-# attach to a named gateway via their own `gateways` field (string or array
-# of strings). Two gateways below carry the same two ports the old `binds`
-# array used — mcp-gateway:3000, llm-gateway:3001 — so the box's baked
-# `http://host.boxlite.internal:3000/mcp` and the `/claude` and `/api`
-# upstream URLs keep working unchanged. Do not reintroduce `binds` or
-# `mcp.port`; this file deliberately uses `gateways` so nobody migrates back.
+# Design and rationale: docs/design/agentgateway.md. Schema pinned at
+# https://raw.githubusercontent.com/agentgateway/agentgateway/v1.4.1/schema/config.json
 
 gateways:
   mcp-gateway:
     port: 3000
     protocol: HTTP
-    # CORS exists solely so the admin UI's "tool playground" — served from
-    # 127.0.0.1:15000, a different origin than this gateway's :3000 — can
-    # call the MCP endpoint directly from browser JavaScript. That UI is on
-    # by default (see the `ui-gateway` entry in `gateways:` below and the
-    # `ui:` block further down) but only reachable after a basic-auth login
-    # (see README.md "Admin UI"). The box itself never needs this: it talks
-    # to :3000 server-to-server (no browser, no Origin header, not subject
-    # to CORS at all). Schema check (v1.4.1, schema
-    # pinned at
-    # https://raw.githubusercontent.com/agentgateway/agentgateway/v1.4.1/schema/config.json,
-    # defs.LocalGateway): `cors` (`CorsSerde`) lives directly on the gateway,
-    # all fields optional. Origin list is
-    # deliberately narrow (only the two loopback UI origins, not `*`) since
-    # this endpoint fronts an authenticated GitHub MCP server; no
-    # allowCredentials, since there is no cookie auth here for it to help.
-    # `Mcp-Session-Id` must be in exposeHeaders because the streamable-HTTP
-    # transport returns the session in that response header and browser JS
-    # cannot read a cross-origin header that isn't explicitly exposed; the
-    # lowercase `mcp-session-id` is also allow-listed so the browser can send
-    # it back on subsequent requests (header matching is case-insensitive,
-    # both forms kept for clarity with what's actually sent each direction).
+    # CORS lets the admin UI's tool playground (127.0.0.1:15000, a different
+    # origin than :3000) call this MCP endpoint from browser JS. The box
+    # itself talks to :3000 server-to-server and is unaffected either way.
+    # Mcp-Session-Id must be in exposeHeaders: the streamable-HTTP transport
+    # returns the session in that response header, which browser JS can't
+    # read cross-origin unless it's explicitly exposed.
     cors:
       allowOrigins: ["http://127.0.0.1:15000", "http://localhost:15000"]
       allowMethods: ["GET", "POST", "DELETE", "OPTIONS"]
@@ -106,41 +31,22 @@ gateways:
   llm-gateway:
     port: 3001
     protocol: HTTP
-  # Admin UI gateway — on by default. Serves the config viewer and MCP tool
-  # playground behind HTTP basic auth (see the `ui:` block below), on a port
-  # separate from the raw, unauthenticated admin API that this repo
-  # deliberately keeps unpublished (ADMIN_ADDR, port 15001, above). A fresh
-  # clone gets a working login with no setup step: `just gateway-up` bootstraps
-  # agentgateway/htpasswd from the tracked agentgateway/htpasswd.default
-  # template (see justfile) if it doesn't already exist, so this comes up
-  # authenticated on the very first run. Change the password at any time with
-  # `just gateway-ui-htpasswd [username]`, which overwrites the live,
-  # gitignored htpasswd file without touching the tracked template.
+  # Admin UI — on by default, behind basic auth (see `ui:` below). Separate
+  # from the unauthenticated admin API (ADMIN_ADDR, port 15001), which this
+  # repo deliberately never publishes — see docs/design/agentgateway.md.
   ui-gateway:
     port: 15000
     protocol: HTTP
 
-# Admin UI — on by default, behind HTTP basic auth. Any port docker-compose.yml
-# publishes is reachable from every running box via host.boxlite.internal, not
-# just the host (see that file's admin-UI ports comment for the full story),
-# so an unauthenticated UI would hand a sandboxed box the live config. `mode:
-# strict` is required, not just `basicAuth:` on its own — the schema default
-# mode is `optional`, which lets a request through when it carries no
-# credentials at all, which would defeat having auth in front of this in the
-# first place. `htpasswd` MUST use the `{file: ...}` form below, never an
-# inline string: Apache htpasswd hashes contain dollar-sign-prefixed segments
-# (e.g. one for apr1, one for bcrypt) and this loader expands every
-# dollar-sign-plus-word token found anywhere in the raw config text (see the
-# file header warning) — an inline hash would make it look up a nonexistent
-# environment variable by that segment's name and crash-loop the gateway.
+# Every port docker-compose.yml publishes is reachable from every running box
+# via host.boxlite.internal, not just the host — see docs/design/agentgateway.md.
+# `mode: strict` is required: the schema default `optional` lets a request
+# through with no credentials at all. `htpasswd` MUST use `{file: ...}`, never
+# an inline string — Apache htpasswd hashes contain dollar-sign segments that
+# would hit the expansion warning above and crash-loop the gateway.
 #
-# The live credential is a KNOWN DEFAULT (username admin, see
-# agentgateway/htpasswd.default) until someone changes it with `just
-# gateway-ui-htpasswd`. That default is guessable by anything with network
-# reach to this port — accepted here because the microVMs this repo boots
-# typically do not mount this repo, so a box has no way to read the password
-# or the hash off disk; it is not a substitute for changing the password
-# before exposing this port more broadly.
+# Live credential is a KNOWN DEFAULT (user admin, see htpasswd.default) until
+# changed with `just gateway-generate-ui-password` — see README.md.
 ui:
   gateways: ui-gateway
   policies:
@@ -151,24 +57,22 @@ ui:
       mode: strict
 
 mcp:
-  # Attaches this MCP config to mcp-gateway (port 3000, see `gateways:`
-  # above). A gateway-attached `mcp:` block is served at `/mcp` and `/sse`
-  # automatically, so the box's baked `http://host.boxlite.internal:3000/mcp`
-  # needs no change here.
+  # Serves /mcp and /sse automatically on mcp-gateway (port 3000) — the box's
+  # baked http://host.boxlite.internal:3000/mcp needs no change here.
   gateways: mcp-gateway
   targets:
-    # GitHub's official MCP server image (ghcr.io/github/github-mcp-server),
-    # run as the `github-mcp` sibling compose service in HTTP mode — see
-    # docker-compose.yml — not GitHub's remote MCP endpoint (unreachable from
-    # this Docker host; see the file header comment). Plain in-network HTTP
-    # (no TLS needed for an in-network hop), but WITH an injected
+    # GitHub's official MCP server (ghcr.io/github/github-mcp-server), run as
+    # the `github-mcp` sibling compose service in HTTP mode (see
+    # docker-compose.yml) — not GitHub's remote MCP endpoint, which this
+    # Docker host cannot reach. Plain in-network HTTP, but WITH an injected
     # Authorization header: github-mcp-server enforces its own OAuth layer on
-    # every http-mode request, including initialize, and ignores its own
-    # GITHUB_PERSONAL_ACCESS_TOKEN entirely in this mode (see the file header
-    # comment) — so agentgateway must supply the bearer token itself. Value
-    # comes from GH_TOKEN, passed into agentgateway's own environment
-    # (docker-compose.yml), not github-mcp's. Path is `/`: github-mcp-server's
-    # HTTP mode mounts its MCP routes at the router root, not at `/mcp`.
+    # every http-mode request and ignores its own GITHUB_PERSONAL_ACCESS_TOKEN
+    # entirely in that mode, so agentgateway must supply the bearer token
+    # itself, sourced from GH_TOKEN in agentgateway's own environment (not
+    # github-mcp's). Path is `/`: github-mcp-server's HTTP mode mounts its MCP
+    # routes at the router root, not at `/mcp` (see docs/design/agentgateway.md
+    # for the caveat on this holding only because the server isn't
+    # path-selective).
     - name: github
       policies:
         requestHeaderModifier:
@@ -179,14 +83,13 @@ mcp:
         port: 9090
         path: /
 
-    # --- Not enabled. These are stdio servers and this container has no node/uv,
-    # --- so each needs a sibling compose service running its official image over
-    # --- HTTP, with the target below pointing at it across the compose network.
-    # --- Field name corrected to `mcp.host` (not `mcp.url`) to match the live
-    # --- `github` target above — see the file header comment: the schema's
-    # --- LocalMcpTarget has `unevaluatedProperties: false` and rejects a bare
-    # --- `url:` key, so `url:` here would fail validation the moment it's
-    # --- uncommented.
+    # --- Not enabled. These are stdio servers and this container has no
+    # --- node/uv, so each needs a sibling compose service running its
+    # --- official image over HTTP, with the target below pointing at it
+    # --- across the compose network. Use explicit host/port/path fields
+    # --- like the `github` target above, not a bare `url:` (schema rejects
+    # --- unevaluated properties) or an unconfirmed single-string `host:`
+    # --- with an embedded scheme — see docs/design/agentgateway.md.
     #
     # Terraform — image: hashicorp/terraform-mcp-server (supports streamable HTTP)
     # - name: terraform
@@ -205,52 +108,12 @@ mcp:
     #   mcp:
     #     host: http://host.docker.internal:8000/mcp
 
-# LLM routes (Task 2, re-nested under top-level `routes:` in Task 13).
-# Schema check (v1.4.1, schema pinned at
-# https://raw.githubusercontent.com/agentgateway/agentgateway/v1.4.1/schema/config.json,
-# defs.LocalAttachedRoute): `routes` is a top-level array of `LocalAttachedRoute` — the same route
-# shape (`matches`/`policies`/`backends`/...) that used to live under
-# `binds[].listeners[].routes[]`, plus a `gateways` field (string or array of
-# strings, `<gateway-name>` or `<gateway-name>/<listener-name>`) that attaches
-# the route to a gateway declared under the top-level `gateways:` map instead
-# of positional nesting. Both routes below attach to llm-gateway (port 3001,
-# see `gateways:` above), matching the port the old `binds` entry used.
-#
-# `policies.ai.routes` and `policies.backendAuth` are each schema-valid in TWO
-# places: at the route level (`routes[].policies.*`) and nested inside the ai
-# backend (`routes[].backends[].ai.policies.*`) — `LocalBackendPolicies` is the
-# same type reused in both spots. The brief's candidate put `ai.routes` under
-# the backend and `backendAuth` on the route; both were verified schema-valid
-# as written, so nothing needed to move. This split also matches agentgateway's
-# own published examples verbatim: the Claude Desktop and Claude Code
-# integration docs (agentgateway.dev/docs/standalone/*/integrations/llm-clients/
-# claude-desktop and .../claude-code, fetched for this task) both nest
-# `policies.ai.routes` under `backends[].ai`. A third-party blog
-# (maniak.io/articles/2026-05-08-claude-codex-passthrough-through-agentgateway)
-# places `backendAuth` as a bare top-level key on the route (sibling of
-# `matches`/`policies`/`backends`) — that key does not exist on `LocalRoute`
-# (`additionalProperties: false`, only name/namespace/ruleName/hostnames/
-# matches/policies/backends, plus `gateways` on the top-level-array variant)
-# and was NOT followed; `backendAuth` stays inside `policies:` per the schema.
-#
-# CONFIRMED (Task 6, off-stack): environment-variable expansion of
-# `policies.backendAuth.key` works. Unsetting ANTHROPIC_API_KEY made the
-# gateway fail at startup with an environment-variable-not-found error for
-# that name, and with it set, the outbound request carried the real value.
-# This was previously unconfirmed by the schema alone: the field's type is
-# `FileOrInline` = `{file: string} | string`, which documents no expansion
-# behavior on the type itself, and upstream's own docs only demonstrate this
-# expansion for the *shorthand* `llm.models[].params.apiKey` field (e.g. in
-# examples/llm-basic/config.yaml and the Anthropic provider doc) — a
-# different field on a different config shape (`llm:` top-level shorthand,
-# not the `gateways:`/`backendAuth` long form used here). The mechanism turns
-# out to be the same underneath either way: the loader expands
-# environment-variable references anywhere in the raw file text, including,
-# disastrously, inside comments — see the warning at the top of this file.
+# LLM routes. See docs/design/agentgateway.md for the credential-asymmetry
+# design and why it's enforced only by justfile's `llm_vars`, not the schema.
 routes:
-  # Subscription OAuth. NO credential block — that absence is what makes
-  # this passthrough: Claude Code's own OAuth token and its
-  # anthropic-beta: oauth-2025-04-20 header travel upstream untouched.
+  # Subscription OAuth passthrough. NO credential block — that absence is
+  # what makes this passthrough: Claude Code's own OAuth token and its
+  # anthropic-beta header travel upstream untouched.
   # Client sets ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/claude
   - gateways: llm-gateway
     matches:
@@ -290,23 +153,18 @@ routes:
           name: claude-keyed
           provider:
             anthropic: {}
-          # Upstream host for this route only, defaulted in docker-compose.yml
-          # (env var AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST) so a non-Anthropic key (e.g.
-          # LiteLLM) can be pointed at its actual provider instead of
-          # api.anthropic.com. Do not add this to the /claude passthrough
-          # backend above — it must keep forwarding to Anthropic untouched.
+          # Upstream for this route only (default set in docker-compose.yml
+          # via AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST), so a non-Anthropic key
+          # (e.g. LiteLLM) can point elsewhere. Do NOT add this to the
+          # /claude backend above — it must keep forwarding to Anthropic
+          # untouched. Format is host:port, no scheme, no path — a portless
+          # value crash-loops the gateway.
           hostOverride: "$AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST"
           policies:
-            # Both the default (api.anthropic.com:443) and any custom
-            # override (e.g. a LiteLLM endpoint) speak TLS, never
-            # plain HTTP — hostOverride only replaces host:port, it
-            # does not imply a scheme. Without this, agentgateway
-            # sends plain HTTP to whatever hostOverride names, which
-            # a TLS-only upstream answers with a 400 from its own TLS
-            # frontend (nginx, etc). An empty object means "use TLS
-            # with default settings". Do not add insecure or
-            # insecureHost here: a certificate that fails to verify
-            # is for the operator to fix, not to silence.
+            # hostOverride replaces only host:port, not the scheme — without
+            # this, agentgateway sends plain HTTP to a TLS-only upstream and
+            # gets a bare 400 back. Empty object = TLS with default settings;
+            # do not add insecure/insecureHost here.
             backendTLS: {}
             ai:
               routes:
