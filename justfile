@@ -149,6 +149,27 @@ gateway-down:
 gateway-logs:
     {{gateway}} logs -f
 
+# Generate agentgateway/htpasswd for the password-protected admin UI (see
+# README.md "Admin UI" for the full enable steps). Prompts for the password
+# interactively via `htpasswd`/`openssl` themselves (hidden input, not
+# echoed, never passed as an argument — that would land in both shell
+# history and `ps` output). Prefers `htpasswd -B` (bcrypt, apache2-utils);
+# falls back to `openssl passwd -apr1` if htpasswd isn't installed.
+# Usage: just gateway-ui-htpasswd [username]
+gateway-ui-htpasswd username="admin":
+    #!/usr/bin/env sh
+    set -eu
+    if command -v htpasswd >/dev/null 2>&1; then
+      htpasswd -Bc agentgateway/htpasswd "{{username}}"
+    elif command -v openssl >/dev/null 2>&1; then
+      hash="$(openssl passwd -apr1)"
+      printf '%s:%s\n' "{{username}}" "$hash" > agentgateway/htpasswd
+    else
+      echo "gateway-ui-htpasswd: need htpasswd (apache2-utils) or openssl" >&2
+      exit 1
+    fi
+    echo "Wrote agentgateway/htpasswd for user {{username}}" >&2
+
 # Log in to an authenticated image registry (e.g. ECR) and store credentials in
 # registries.local.json (gitignored). Mirrors `docker login`'s interface.
 # Usage: aws ecr get-login-password --region <region> | just registry-login --registry <host> --username AWS --password-stdin
