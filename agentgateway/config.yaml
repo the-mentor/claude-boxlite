@@ -203,8 +203,9 @@ mcp:
     #     host: http://host.docker.internal:8000/mcp
 
 # LLM routes (Task 2, re-nested under top-level `routes:` in Task 13).
-# Schema check (v1.4.1, /tmp/agw-schema.json + schema/config.md rendered from
-# it): `routes` is a top-level array of `LocalAttachedRoute` — the same route
+# Schema check (v1.4.1, schema pinned at
+# https://raw.githubusercontent.com/agentgateway/agentgateway/v1.4.1/schema/config.json,
+# defs.LocalAttachedRoute): `routes` is a top-level array of `LocalAttachedRoute` — the same route
 # shape (`matches`/`policies`/`backends`/...) that used to live under
 # `binds[].listeners[].routes[]`, plus a `gateways` field (string or array of
 # strings, `<gateway-name>` or `<gateway-name>/<listener-name>`) that attaches
