@@ -20,49 +20,52 @@
 # target is `targets[].mcp.{host}` or `targets[].mcp.{host,port,path}` —
 # `unevaluatedProperties: false` on that object rules out a bare `url:` or a
 # `headers:` map (both used by the pre-schema-check draft of this file).
-# Bearer-token injection instead goes through the per-target
-# `policies.requestHeaderModifier.set` map (defs.SimpleLocalBackendPolicies),
-# the same mechanism the upstream traffic-aws-agentcore example uses for a
-# static auth header.
 #
-# NOT confirmed by the schema: whether the single-string `host` field parses
-# a path out of a full URL (its own examples only show a bare origin or a
-# bare `host:port`), or how backend TLS gets enabled for the `host+port+path`
-# form (no scheme/tls field exists on that variant; defs.LocalBackendTLS is
-# all-optional tuning knobs, not an on/off switch). Kept the original full
-# URL string under the corrected `host` key as the minimal fix. If Task 6's
-# live run gets a TLS or 404-on-path error here, retry with the explicit
-# `host: api.githubcopilot.com` / `port: 443` / `path: /mcp/` form plus
-# `policies.backendTLS: {}`.
+# RESOLVED (Task 10): the `github` target below no longer points at GitHub's
+# remote MCP endpoint at all. Task 6 proved the Docker host cannot complete a
+# TLS handshake to api.githubcopilot.com under any circumstances (reproduced
+# with a bare curl and an unrelated container, zero agentgateway involvement)
+# — a network condition, not a config bug, so no amount of retrying the
+# target shape here would have fixed it. `github` now points at
+# `ghcr.io/github/github-mcp-server` running as a sibling compose service in
+# HTTP mode (see docker-compose.yml), reached over the compose network in
+# plain HTTP. That removes both open questions this paragraph used to track
+# for that target: no TLS is involved, so backend TLS enablement is moot, and
+# the explicit `host`/`port`/`path` form is used directly (no full URL under
+# `host:` to worry about parsing).
 #
-# ALSO NOT confirmed: whether the GH_TOKEN reference on the Authorization
-# header below is actually expanded at runtime. Upstream only documents
-# environment-variable expansion for `apiKey`-style fields; the
-# traffic-aws-agentcore example that corroborates the
-# `requestHeaderModifier.set` key path uses a hardcoded literal header value
-# ("user-foo"), not an environment-variable reference, so it proves the key
-# path only, not expansion. This could NOT be exercised in Task 6's run: the
-# environment cannot complete a TLS handshake to api.githubcopilot.com at
-# all, with or without agentgateway in front of it, so no request ever got
-# far enough to reveal whether the header was expanded or sent literally.
-# Still an open risk, not confirmed fine — untested for an environmental
-# reason, not because it passed. If a future environment can reach GitHub,
-# check agentgateway's startup/debug logs for the resolved header, or make an
-# authenticated call through the GitHub MCP target, not just confirm the
-# listener answers.
+# The single-string `host`-with-path-and-scheme question is NOT resolved in
+# general — it's just moot for `github` now. The three disabled sibling
+# targets below (terraform, playwright, fetch) still use that unconfirmed
+# form; if one of them gets enabled, give it the same explicit
+# `host`/`port`/`path` treatment rather than assuming a full URL parses.
+#
+# Bearer-token injection via `policies.requestHeaderModifier.set` (as used by
+# the upstream traffic-aws-agentcore example, and formerly by this file's
+# `github` target) is no longer exercised anywhere in this config: the
+# sibling `github-mcp` service holds the PAT itself via its own
+# GITHUB_PERSONAL_ACCESS_TOKEN environment variable, so agentgateway makes an
+# unauthenticated in-network call and never needs to inject a credential for
+# this target. That also removes the open question this file used to carry
+# about whether a GH_TOKEN reference in a header value actually gets
+# expanded at runtime — there's no header value to expand anymore.
 
 mcp:
   port: 3000
   targets:
-    # GitHub's remote MCP server. Set GH_TOKEN in .env to use it (not yet
-    # present there as of this writing).
+    # GitHub's official MCP server image (ghcr.io/github/github-mcp-server),
+    # run as the `github-mcp` sibling compose service in HTTP mode — see
+    # docker-compose.yml — not GitHub's remote MCP endpoint (unreachable from
+    # this Docker host; see the file header comment). Plain in-network HTTP,
+    # no TLS and no Authorization header: `github-mcp` holds the PAT itself
+    # via its own GITHUB_PERSONAL_ACCESS_TOKEN environment variable, set from
+    # GH_TOKEN in .env. Path is `/`: github-mcp-server's HTTP mode mounts its
+    # MCP routes at the router root, not at `/mcp`.
     - name: github
       mcp:
-        host: https://api.githubcopilot.com/mcp/
-      policies:
-        requestHeaderModifier:
-          set:
-            Authorization: "Bearer $GH_TOKEN"
+        host: github-mcp
+        port: 9090
+        path: /
 
     # --- Not enabled. These are stdio servers and this container has no node/uv,
     # --- so each needs a sibling compose service running its official image over

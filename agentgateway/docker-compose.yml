@@ -14,10 +14,38 @@ services:
     environment:
       # Required, or the UI binds container-loopback and the published port is dead.
       ADMIN_ADDR: 0.0.0.0:15000
-      # Both may legitimately be empty: a subscription user has no API key,
-      # and the /claude passthrough route does not need one.
+      # May legitimately be empty: a subscription user has no API key, and the
+      # /claude passthrough route does not need one.
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
-      GH_TOKEN: "${GH_TOKEN:-}"
     volumes:
       - ./config.yaml:/config.yaml:ro
+    restart: unless-stopped
+    # Not a correctness dependency — agentgateway's MCP targets connect lazily,
+    # so it starts fine before github-mcp is ready. This only orders `docker
+    # compose up`/`down` so the two come and go together.
+    depends_on:
+      - github-mcp
+
+  # GitHub's official MCP server image, run in HTTP mode as a sibling service.
+  # agentgateway proxies to it by service name across the compose network
+  # (see the `github` target in config.yaml) instead of GitHub's remote
+  # endpoint, which the Docker host cannot reach at all (TLS handshake to
+  # api.githubcopilot.com fails outside agentgateway too).
+  github-mcp:
+    image: ghcr.io/github/github-mcp-server:v1.8.0
+    container_name: github-mcp
+    # --listen-host is set explicitly rather than relying on the flag's
+    # documented default (empty = all interfaces): pinning it to 0.0.0.0
+    # keeps this reachable across the compose network regardless of upstream
+    # ever changing that default.
+    command: ["http", "--port", "9090", "--listen-host", "0.0.0.0"]
+    environment:
+      # May legitimately be empty: compose must still start without a GH_TOKEN
+      # in .env. The image's own auth check only fires for its stdio mode; in
+      # http mode with no token, tool calls needing GitHub auth simply fail
+      # per-request instead of the container refusing to start.
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GH_TOKEN:-}"
+    # Deliberately no `ports:` here. agentgateway reaches this over the
+    # compose network by service name/port alone, so the PAT-bearing server
+    # is unreachable from the host entirely. Do NOT publish a host port.
     restart: unless-stopped

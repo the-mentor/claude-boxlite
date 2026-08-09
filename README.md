@@ -115,7 +115,7 @@ host loopback proxy, so nothing is exposed to your network.
 
 | Bind | Serves |
 |---|---|
-| `:3000/mcp` | multiplexed MCP tools (`github` live; others commented in `agentgateway/config.yaml`) |
+| `:3000/mcp` | multiplexed MCP tools (`github` live, proxied to a sibling `github-mcp` container — not GitHub's remote endpoint; others commented in `agentgateway/config.yaml`) |
 | `:3001/claude` | Anthropic passthrough — your subscription OAuth token goes upstream untouched |
 | `:3001/api` | Anthropic keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host |
 | `:15000/ui` | admin UI |
@@ -132,7 +132,7 @@ observability and a single egress point, not credential custody.
 
 | Symptom | Cause |
 |---|---|
-| `/mcp` connects but lists no tools | `GH_TOKEN` unset or expired — the upstream 401 shows in `just gateway-logs` |
+| `/mcp` connects but lists no tools | `GH_TOKEN` unset or expired — the `github-mcp` container's GitHub API calls 401, visible in `just gateway-logs` |
 | 401 from Anthropic | your `ANTHROPIC_BASE_URL` path and your credential disagree: `/claude` needs the OAuth token, `/api` needs the gateway to have `ANTHROPIC_API_KEY` |
 | 401 in subscription mode with the right path | `ANTHROPIC_AUTH_TOKEN` is set and shadowing the OAuth token — unset it |
 | 400 `Extra inputs are not permitted` | beta headers the backend rejects; set `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` and add it to `passthrough_vars` |
