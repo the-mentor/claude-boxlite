@@ -120,11 +120,11 @@ directly; `just --list` shows everything.
 
 `just` only finds a justfile in the current (or a parent) directory, so by default these
 commands only work from inside this repo. To run them from any directory, install the
-`claude-boxlite` wrapper onto your `PATH`:
+`cb` wrapper onto your `PATH`:
 
 ```bash
-just install            # symlinks bin/claude-boxlite into ~/bin (pass a dir to override)
-claude-boxlite up-dev   # now works from anywhere
+just install    # symlinks bin/cb into ~/bin (pass a dir to override)
+cb up-dev       # now works from anywhere
 ```
 
 `just uninstall` removes the symlink. The wrapper just runs `just --justfile

@@ -21,7 +21,7 @@ just list               # list running boxes across every box name (see below), 
 just down               # stop and remove the box
 just registry-up/down   # manage the local docker-compose registry directly
 just registry-login     # log in to an authenticated registry (e.g. ECR), see below
-just install/uninstall  # symlink the claude-boxlite wrapper onto PATH (see below)
+just install/uninstall  # symlink the cb wrapper onto PATH (see below)
 ```
 
 `up`/`up-dev` take an optional box name (default `claude-box`) and flags: `-f`/`--force`
@@ -33,9 +33,9 @@ environment variable into the box, repeatable, appended to `envflags` alongside
 override (e.g. `just shell -- bash`) to exec something other than `claude` in the running box.
 
 `just` only looks for a justfile in the current or a parent directory, so these recipes only
-work from inside the repo by default. `just install` symlinks `bin/claude-boxlite` — a
+work from inside the repo by default. `just install` symlinks `bin/cb` — a
 wrapper that runs `just --justfile <repo>/justfile "$@"` — onto `PATH` (default
-`~/bin`, override with `just install <dir>`), so `claude-boxlite up-dev` works from
+`~/bin`, override with `just install <dir>`), so `cb up-dev` works from
 anywhere. `just` sets the working directory to the justfile's own directory when invoked with
 `--justfile`, so recipes' relative paths (`registries.local.json`,
 `local-development/registry/docker-compose.yml`) resolve correctly either way. `just

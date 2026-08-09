@@ -82,16 +82,16 @@ install-boxlite version="" dir=(env_var('HOME') + "/bin"):
          echo "  export PATH=\"${install_dir}:\$PATH\"" >&2 ;;
     esac
 
-# Symlink the claude-boxlite wrapper (bin/claude-boxlite) onto PATH so
-# `claude-boxlite up-dev` etc. work from any directory. Installs into
-# ~/bin by default; pass a directory to install elsewhere.
+# Symlink the cb wrapper (bin/cb) onto PATH so `cb up-dev` etc. work from
+# any directory. Installs into ~/bin by default; pass a directory to
+# install elsewhere.
 # Usage: just install [dir]
 install dir=(env_var('HOME') + "/bin"):
     #!/usr/bin/env sh
     set -eu
     mkdir -p "{{dir}}"
-    ln -sf "{{justfile_directory()}}/bin/claude-boxlite" "{{dir}}/claude-boxlite"
-    echo "Installed {{dir}}/claude-boxlite -> {{justfile_directory()}}/bin/claude-boxlite"
+    ln -sf "{{justfile_directory()}}/bin/cb" "{{dir}}/cb"
+    echo "Installed {{dir}}/cb -> {{justfile_directory()}}/bin/cb"
     case ":$PATH:" in
       *":{{dir}}:"*) : ;;
       *) echo "Note: {{dir}} is not on your PATH. Add this to your shell rc file:" >&2
@@ -101,7 +101,7 @@ install dir=(env_var('HOME') + "/bin"):
 # Remove the symlink installed by `just install`.
 # Usage: just uninstall [dir]
 uninstall dir=(env_var('HOME') + "/bin"):
-    rm -f "{{dir}}/claude-boxlite"
+    rm -f "{{dir}}/cb"
 
 # Start the local image registry (docker compose)
 registry-up:
