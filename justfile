@@ -136,13 +136,12 @@ registry-up:
 registry-down:
     {{compose}} down
 
-# Start the host-side agentgateway (docker compose). Long-lived: boxes come and
-# go, this stays up. Not started by `just up`/`up-dev`. Bootstraps
-# agentgateway/htpasswd (gitignored, backs the admin UI's basic auth) from the
+# Bootstraps agentgateway/htpasswd (gitignored, backs the admin UI's basic auth) from the
 # tracked agentgateway/htpasswd.default template on first run only — if the
 # live file already exists (e.g. a changed password), it is left alone, so a
 # fresh clone gets a working default login with no setup step and a password
-# change never leaves a tracked file modified.
+# change never leaves a tracked file modified. Not started by `just up`/`up-dev`.
+# Start the host-side agentgateway (long-lived docker compose service).
 gateway-up:
     #!/usr/bin/env sh
     set -eu
@@ -165,9 +164,9 @@ gateway-logs:
 # password interactively via `htpasswd`/`openssl` themselves (hidden input,
 # not echoed, never passed as an argument — that would land in both shell
 # history and `ps` output). Prefers `htpasswd -B` (bcrypt, apache2-utils);
-# falls back to `openssl passwd -apr1` if htpasswd isn't installed.
-# Usage: just gateway-ui-htpasswd [username]
-gateway-ui-htpasswd username="admin":
+# falls back to `openssl passwd -apr1` if htpasswd isn't installed. See README.md "Admin UI".
+# Change the password for the admin UI basic auth.
+gateway-generate-ui-password username="admin":
     #!/usr/bin/env sh
     set -eu
     if command -v htpasswd >/dev/null 2>&1; then
@@ -176,7 +175,7 @@ gateway-ui-htpasswd username="admin":
       hash="$(openssl passwd -apr1)"
       printf '%s:%s\n' "{{username}}" "$hash" > agentgateway/htpasswd
     else
-      echo "gateway-ui-htpasswd: need htpasswd (apache2-utils) or openssl" >&2
+      echo "gateway-generate-ui-password: need htpasswd (apache2-utils) or openssl" >&2
       exit 1
     fi
     echo "Wrote agentgateway/htpasswd for user {{username}}" >&2

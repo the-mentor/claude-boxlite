@@ -95,11 +95,11 @@ just up                # boot the box without rebuilding (images must already be
 just build             # start the local registry, build base + custom images, push custom
 just shell             # open a session in the running box
 just list              # list running boxes
-just down              # stop and remove the box
-just gateway-up        # start the host-side agentgateway (MCP + Anthropic routes)
-just gateway-down      # stop it
-just gateway-logs      # follow its logs
-just gateway-ui-htpasswd # change the admin UI's default credentials, see below
+just down                        # stop and remove the box
+just gateway-up                  # start the host-side agentgateway (MCP + Anthropic routes)
+just gateway-down                # stop it
+just gateway-logs                # follow its logs
+just gateway-generate-ui-password # change the admin UI's default credentials, see below
 ```
 
 Use `just up-dev` the first time (or after changing the image); use `just up` for a fast
@@ -156,8 +156,8 @@ anything sensitive, or before publishing it more broadly than `127.0.0.1`.
 Change it at any time with:
 
 ```bash
-just gateway-ui-htpasswd            # prompts for a new password for user "admin"
-just gateway-ui-htpasswd otheruser  # or a different username
+just gateway-generate-ui-password            # prompts for a new password for user "admin"
+just gateway-generate-ui-password otheruser  # or a different username
 ```
 
 This overwrites the live `agentgateway/htpasswd` only — the tracked

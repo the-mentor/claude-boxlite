@@ -21,7 +21,7 @@ just exec               # open a session in the running box (alias: just shell)
 just list               # list running boxes across every box name (see below), forwarding args to `boxlite list`
 just down               # stop and remove the box
 just gateway-up/down/logs # manage the host-side agentgateway
-just gateway-ui-htpasswd # change the admin UI's default credentials, see below
+just gateway-generate-ui-password # change the admin UI's default credentials, see below
 just registry-up/down   # manage the local docker-compose registry directly
 just registry-login     # log in to an authenticated registry (e.g. ECR), see below
 just install/uninstall  # symlink the cb wrapper onto PATH (see below)
@@ -136,7 +136,7 @@ that's not viable until upstream lands it.
   password, is left alone), so a fresh clone gets a working login — `admin` / `agentgateway` —
   with no setup step. That default is a known, guessable credential; it's accepted only because
   this repo's boxes typically don't mount the repo itself, so a box has no other way to read
-  the password or hash off disk. `just gateway-ui-htpasswd` overwrites the live htpasswd file
+  the password or hash off disk. `just gateway-generate-ui-password` overwrites the live htpasswd file
   (never the tracked template, so a password change never leaves a tracked file modified) to
   change it. `ui.policies.basicAuth.mode: strict` is required rather than the schema's
   `optional` default, since `optional` would wave through any request with no credentials at
