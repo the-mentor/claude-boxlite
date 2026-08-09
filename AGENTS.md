@@ -86,11 +86,12 @@ that's not viable until upstream lands it.
   deliberately left alone.
 - **Credentials via env-var passthrough, not baked images.** `justfile`'s `passthrough_vars`
   lists the vars forwarded into the box when set (from a gitignored `.env`, loaded via
-  `set dotenv-load`): Claude auth (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, plus
-  optional `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`/`ANTHROPIC_MODEL`), GitHub
-  (`GH_TOKEN`/`GITHUB_TOKEN`), git identity (`GIT_AUTHOR_*`/`GIT_COMMITTER_*`), and terminal
-  identity (`TERM_PROGRAM` and friends — see below). Add a var to `passthrough_vars` to make
-  it available in the box.
+  `set dotenv-load`): Claude auth is one mutually exclusive set picked by `llm_vars` based on
+  what `.env` contains — subscription, direct API key, or gateway-keyed API key (see
+  **Host-side gateway** below for exactly which vars each set includes), plus
+  `ANTHROPIC_MODEL` always optional on top — GitHub (`GH_TOKEN`/`GITHUB_TOKEN`), git identity
+  (`GIT_AUTHOR_*`/`GIT_COMMITTER_*`), and terminal identity (`TERM_PROGRAM` and friends — see
+  below). Add a var to `passthrough_vars` to make it available in the box.
 - **Terminal identity passthrough.** `TERM` is forwarded unconditionally (hardcoded on the
   `boxlite run`/`exec` invocations, defaulting to `xterm-256color`) rather than living in
   `passthrough_vars` — that list only forwards a var when the host already has it set, with no

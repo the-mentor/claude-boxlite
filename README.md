@@ -27,10 +27,11 @@ broker Anthropic traffic — with an API key it holds the key host-side so the V
 - **Credentials.** Secrets are read from a gitignored `.env` and passed to the box at run
   time via env-var injection (BoxLite's official credential mechanism) — never baked into
   an image. A known set of vars is forwarded when set (see `passthrough_vars` in the
-  `justfile`): Claude auth (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, plus optional
-  `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` / `ANTHROPIC_MODEL`), GitHub
-  (`GH_TOKEN`/`GITHUB_TOKEN`), and git identity (`GIT_AUTHOR_*` / `GIT_COMMITTER_*`). Unset
-  vars are skipped.
+  `justfile`): Claude auth is not a flat list but one mutually exclusive set picked by
+  `llm_vars` based on what `.env` contains — subscription, direct API key, or gateway-keyed
+  API key (see **The host-side gateway** below for exactly which vars each set includes),
+  plus `ANTHROPIC_MODEL` always optional on top — GitHub (`GH_TOKEN`/`GITHUB_TOKEN`), and git
+  identity (`GIT_AUTHOR_*` / `GIT_COMMITTER_*`). Unset vars are skipped.
 - **GitHub.** Setting `GH_TOKEN` (or `GITHUB_TOKEN`) authenticates the `gh` CLI
   automatically; git is preconfigured to use gh's credential helper, so `git clone`/`push`
   over HTTPS work too. Commit identity comes from the `GIT_AUTHOR_*` / `GIT_COMMITTER_*`
@@ -117,7 +118,7 @@ host loopback proxy, so nothing is exposed to your network.
 | `:3000/mcp` | multiplexed MCP tools (`github` live; others commented in `agentgateway/config.yaml`) |
 | `:3001/claude` | Anthropic passthrough — your subscription OAuth token goes upstream untouched |
 | `:3001/api` | Anthropic keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host |
-| `:15000/ui` | admin UI and playground |
+| `:15000/ui` | admin UI |
 
 It is long-lived and restarts with Docker; `just up`/`up-dev` do not start it. If
 `ANTHROPIC_BASE_URL` points at it and it is not running, the box will fail to reach Anthropic
