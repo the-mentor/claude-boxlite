@@ -71,6 +71,12 @@ cp .env.example .env
 # Optional git identity: GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL
 ```
 
+If `ANTHROPIC_API_KEY` isn't actually an Anthropic key — a LiteLLM key, say — set
+`AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST` in `.env` to the bare `host:port` it should be sent to
+instead (no scheme, no path). That changes only where the `/api` route forwards to; it is
+unrelated to `ANTHROPIC_BASE_URL`, which is where the box sends traffic — always the gateway,
+in this mode.
+
 > **Upgrading:** if your `.env` already sets `ANTHROPIC_BASE_URL` for some other proxy, add
 > `ANTHROPIC_AUTH_TOKEN=...` to it. Setting `ANTHROPIC_BASE_URL` now means "the credential
 > lives outside the box", so `ANTHROPIC_API_KEY` is no longer forwarded — without an auth
@@ -108,6 +114,30 @@ need a valid `CLAUDE_CODE_OAUTH_TOKEN` in `.env`. The `agentgateway` MCP server 
 configured user-scoped in `/root/.claude.json`, so Claude Code points at the host gateway
 in any project — including a mounted host directory.
 
+`up`, `up-dev`, `shell`, and `down` take an optional box name (default `claude-box`), so you
+can run several boxes side by side. `up`/`up-dev` also accept `-f`/`--force` to replace an
+existing box of the same name (without it, a name collision errors out):
+
+```bash
+just up-dev my-box     # build + boot a box named "my-box"
+just up my-box -f      # re-boot it, replacing the running box
+just up --cwd          # boot with the host current directory mounted at /workspace
+just shell my-box      # open a session in it
+just down my-box       # tear it down
+```
+
+`up`/`up-dev` also accept `-c`/`--cwd` (mount the host current directory onto `/workspace`),
+`-v host:box` (mount an arbitrary host folder, repeatable), and `-e KEY=VALUE` (inject an
+extra environment variable into the box, repeatable):
+
+```bash
+just up -e test=1 -e test2=2   # boot with test=1 and test2=2 set in the box
+```
+
+Other recipes: `just registry-up` / `just registry-down` manage the local registry
+directly; `just gateway-up` / `just gateway-down` / `just gateway-logs` manage the host-side
+agentgateway (see below); `just --list` shows everything.
+
 ### The host-side gateway
 
 `just gateway-up` runs agentgateway from `agentgateway/docker-compose.yml`. Every port it
@@ -130,6 +160,32 @@ to "the host only." That's why the admin API's port is not published by default 
 `:15000` admin UI is a third, `ui-gateway`.) `:3000` also allows CORS from the admin UI's
 tool playground (`127.0.0.1:15000`) so it can call the MCP endpoint directly from browser
 JavaScript; the box itself talks to it server-to-server and is unaffected either way.
+
+The gateway is long-lived and restarts with Docker; `just up`/`up-dev` do not start it. If
+`ANTHROPIC_BASE_URL` points at it and it is not running, the box will fail to reach Anthropic
+— `just gateway-logs` is the first thing to check.
+
+The `/mcp` half works in every auth mode. Only the keyed mode keeps a credential off the VM:
+in subscription mode Claude Code must hold the OAuth token to send it, so that mode buys
+observability and a single egress point, not credential custody.
+
+**What actually stays off the box.** "The gateway keeps credentials host-side" is about one
+credential, not all of them:
+
+| Credential | Reaches the box? | Why |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | No, when `ANTHROPIC_BASE_URL` points at the gateway's `/api` route | the box never calls Anthropic directly in that mode — the gateway does it on the box's behalf, so the key has no reason to be there. With no `ANTHROPIC_BASE_URL` set at all, `llm_vars` forwards this key straight into the box instead — the gateway isn't in the loop, so this guarantee only applies to gateway-keyed mode |
+| `GH_TOKEN` / `GITHUB_TOKEN` | Yes | the box runs `gh` and `git push` itself, and no proxy can do that for it |
+
+**Troubleshooting**
+
+| Symptom | Cause |
+|---|---|
+| `/mcp` connects but lists no tools | `GH_TOKEN` unset or expired — the `github-mcp` container's GitHub API calls 401, visible in `just gateway-logs` |
+| 401 from Anthropic | your `ANTHROPIC_BASE_URL` path and your credential disagree: `/claude` needs the OAuth token, `/api` needs the gateway to have `ANTHROPIC_API_KEY` |
+| 401 in subscription mode with the right path | `ANTHROPIC_AUTH_TOKEN` is set and shadowing the OAuth token — unset it |
+| 400 `Extra inputs are not permitted` | beta headers the backend rejects; set `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` and add it to `passthrough_vars` |
+| Box can't reach Anthropic at all | the gateway isn't running — `just gateway-up` |
 
 ### Admin UI
 
@@ -167,62 +223,6 @@ leaves a tracked file showing as modified. Then restart for it to take effect:
 ```bash
 just gateway-down && just gateway-up
 ```
-
-It is long-lived and restarts with Docker; `just up`/`up-dev` do not start it. If
-`ANTHROPIC_BASE_URL` points at it and it is not running, the box will fail to reach Anthropic
-— `just gateway-logs` is the first thing to check.
-
-The `/mcp` half works in every auth mode. Only the keyed mode keeps a credential off the VM:
-in subscription mode Claude Code must hold the OAuth token to send it, so that mode buys
-observability and a single egress point, not credential custody.
-
-If `ANTHROPIC_API_KEY` isn't actually an Anthropic key — e.g. a LiteLLM key — set
-`AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST` in `.env` to the bare host it should be sent to instead (no scheme,
-no path). This only changes where the `/api` route forwards to; it's unrelated to
-`ANTHROPIC_BASE_URL`, which is where the box itself sends traffic (always the gateway, in
-this mode).
-
-**What actually stays off the box.** "The gateway keeps credentials host-side" is about one
-credential, not all of them:
-
-| Credential | Reaches the box? | Why |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | No, when `ANTHROPIC_BASE_URL` points at the gateway's `/api` route | the box never calls Anthropic directly in that mode — the gateway does it on the box's behalf, so the key has no reason to be there. With no `ANTHROPIC_BASE_URL` set at all, `llm_vars` forwards this key straight into the box instead — the gateway isn't in the loop, so this guarantee only applies to gateway-keyed mode |
-| `GH_TOKEN` / `GITHUB_TOKEN` | Yes | the box runs `gh` and `git push` itself, and no proxy can do that for it |
-
-**Troubleshooting**
-
-| Symptom | Cause |
-|---|---|
-| `/mcp` connects but lists no tools | `GH_TOKEN` unset or expired — the `github-mcp` container's GitHub API calls 401, visible in `just gateway-logs` |
-| 401 from Anthropic | your `ANTHROPIC_BASE_URL` path and your credential disagree: `/claude` needs the OAuth token, `/api` needs the gateway to have `ANTHROPIC_API_KEY` |
-| 401 in subscription mode with the right path | `ANTHROPIC_AUTH_TOKEN` is set and shadowing the OAuth token — unset it |
-| 400 `Extra inputs are not permitted` | beta headers the backend rejects; set `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` and add it to `passthrough_vars` |
-| Box can't reach Anthropic at all | the gateway isn't running — `just gateway-up` |
-
-`up`, `up-dev`, `shell`, and `down` take an optional box name (default `claude-box`), so you
-can run several boxes side by side. `up`/`up-dev` also accept `-f`/`--force` to replace an
-existing box of the same name (without it, a name collision errors out):
-
-```bash
-just up-dev my-box     # build + boot a box named "my-box"
-just up my-box -f      # re-boot it, replacing the running box
-just up --cwd          # boot with the host current directory mounted at /workspace
-just shell my-box      # open a session in it
-just down my-box       # tear it down
-```
-
-`up`/`up-dev` also accept `-c`/`--cwd` (mount the host current directory onto `/workspace`),
-`-v host:box` (mount an arbitrary host folder, repeatable), and `-e KEY=VALUE` (inject an
-extra environment variable into the box, repeatable):
-
-```bash
-just up -e test=1 -e test2=2   # boot with test=1 and test2=2 set in the box
-```
-
-Other recipes: `just registry-up` / `just registry-down` manage the local registry
-directly; `just gateway-up` / `just gateway-down` / `just gateway-logs` manage the host-side
-agentgateway (see below); `just --list` shows everything.
 
 ### Running from anywhere
 
