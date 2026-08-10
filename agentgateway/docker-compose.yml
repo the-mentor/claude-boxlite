@@ -50,11 +50,29 @@ services:
       # a fresh clone gets a working default login. Gitignored — never
       # commit this file, it's a live credential.
       - ./htpasswd:/etc/agentgateway/htpasswd:ro
+      # Cost catalog for config.yaml's `config.modelCatalog`. Tracked in git
+      # (not gitignored like htpasswd above — it holds no credential) rather
+      # than generated at boot by agctl: no new host tooling, no network
+      # fetch on startup, exact model ids stay under the user's control, and
+      # it's reviewable in git like any other file here. Tradeoff: prices go
+      # stale and must be updated by hand — the catalog's JSON schema
+      # (unknown fields rejected) has no room for an in-file comment saying
+      # so, hence recording it here instead.
+      - ./model-costs.json:/etc/agentgateway/model-costs.json:ro
+      # Writable named volume (not a bind mount) backing config.yaml's
+      # `config.logging.database.url`. sqlx creates the SQLite file itself
+      # but not its parent directory, so this only needs to exist and be
+      # writable. Named rather than bind-mounted so `docker compose down`
+      # doesn't leave a root-owned file inside the repo checkout.
+      - agentgateway-logs:/var/lib/agentgateway
     restart: unless-stopped
-    # Not a correctness dependency — MCP targets connect lazily. Only orders
-    # `docker compose up`/`down` so the two come and go together.
+    # Not a correctness dependency — MCP targets connect lazily and OTLP
+    # spans are fire-and-forget, so agentgateway starts fine before either is
+    # up. Only orders `docker compose up`/`down` so all three come and go
+    # together.
     depends_on:
       - github-mcp
+      - jaeger
 
   # GitHub's official MCP server, run in HTTP mode as a sibling service.
   # agentgateway proxies to it by service name over the compose network (see
@@ -74,3 +92,35 @@ services:
     # Deliberately no `ports:` — reached only over the compose network by
     # service name. Do NOT publish a host port.
     restart: unless-stopped
+
+  # OTLP-gRPC trace backend for config.yaml's `config.tracing` block.
+  # jaegertracing/all-in-one accepts OTLP gRPC directly (COLLECTOR_OTLP_ENABLED
+  # below), so no separate otel-collector is needed in front of it.
+  jaeger:
+    # Jaeger v1 (this all-in-one image) reached end-of-life 2025-12-31 —
+    # 1.76.0 is its last release, no further tags will appear. Pinned anyway
+    # because it's still the simplest thing that accepts OTLP gRPC via a
+    # single env var; Jaeger v2 (image jaegertracing/jaeger) replaces that
+    # with an OTel-Collector-style YAML config and is not a drop-in swap.
+    # Revisit this service if 1.76.0 ever stops being pullable.
+    image: jaegertracing/all-in-one:1.76.0
+    container_name: jaeger
+    environment:
+      # Makes this image accept OTLP over gRPC on 4317 with no separate
+      # otel-collector in front of it.
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      # NOT 4317 — agentgateway reaches collection at jaeger:4317 over the
+      # compose network only; publishing it would let every running box push
+      # spans in directly too (see the ports-rule comment at the top of this
+      # file), and nothing outside the compose network needs to send spans.
+      # 16686 (the trace-viewer UI) is safe to publish under that same rule:
+      # every box can reach it, but it's read-only and holds no credentials,
+      # unlike the admin API this file already refuses to publish above.
+      - "127.0.0.1:16686:16686" # Jaeger UI (read-only, no auth needed)
+    restart: unless-stopped
+
+# Named volume backing config.yaml's `config.logging.database.url` — see the
+# mount comment on `agentgateway` above for why named rather than bind-mounted.
+volumes:
+  agentgateway-logs:
