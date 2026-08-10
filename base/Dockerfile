@@ -1,7 +1,7 @@
 FROM node:26-trixie-slim
 RUN apt update \
     && apt upgrade -y \
-    && apt install -y --no-install-recommends git curl wget ca-certificates python3 python3-pip just unzip \
+    && apt install -y --no-install-recommends git curl wget ca-certificates python3 python3-pip just unzip jq \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -11,6 +11,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o 
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g @anthropic-ai/claude-code
+
+RUN curl -s https://ohmyposh.dev/install.sh | bash -s -- -d /usr/local/bin
 
 # Wrap the claude binary to pre-approve ANTHROPIC_API_KEY in ~/.claude.json at
 # startup, silencing the "Detected a custom API key" interactive prompt in

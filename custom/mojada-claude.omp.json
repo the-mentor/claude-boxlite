@@ -1,0 +1,112 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "version": 4,
+  "final_space": true,
+  "blocks": [
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "segments": [
+        {
+          "background": "#fbfbfb",
+          "foreground": "#0077c2",
+          "leading_diamond": "\ue0b6",
+          "options": {
+            "arch": "\uf303",
+            "debian": "\uf306",
+            "fedora": "\uf30a",
+            "linux": "\uf17c",
+            "macos": "\uf179",
+            "manjaro": "\uf312",
+            "opensuse": "\uf314",
+            "ubuntu": "\uf31b",
+            "windows": "\uf17a"
+          },
+          "style": "diamond",
+          "template": " {{ if .WSL }}WSL at {{ end }}{{.Icon}}{{ if .Env.BOX_NAME }} {{ .Env.BOX_NAME }}{{ end }} ",
+          "type": "os"
+        },
+        {
+          "style": "diamond",
+          "leading_diamond": "",
+          "template": " {{ .Name }} \ue0b1",
+          "background": "#0077c2",
+          "foreground": "#ffffff",
+          "type": "shell",
+          "powerline_symbol": "",
+          "trailing_diamond": "\ue0b0",
+          "invert_powerline": true
+        },
+        {
+          "type": "path",
+          "style": "diamond",
+          "background": "#0077c2",
+          "foreground": "#ffffff",
+          "powerline_symbol": "",
+          "options": {
+            "style": "full",
+            "home_icon": "~"
+          },
+          "template": " {{ .Path }} "
+        },
+        {
+          "background": "#fffb38",
+          "background_templates": [
+            "{{ if or (.Working.Changed) (.Staging.Changed) }}#ff9248{{ end }}",
+            "{{ if and (gt .Ahead 0) (gt .Behind 0) }}#f26d50{{ end }}",
+            "{{ if gt .Ahead 0 }}#f17c37{{ end }}",
+            "{{ if gt .Behind 0 }}#89d1dc{{ end }}"
+          ],
+          "foreground": "#193549",
+          "powerline_symbol": "\ue0b0",
+          "properties": {
+            "fetch_stash_count": true,
+            "fetch_status": true,
+            "fetch_upstream_icon": true
+          },
+          "style": "powerline",
+          "template": " {{ .UpstreamIcon }}{{ .HEAD }}{{if .BranchStatus }} {{ .BranchStatus }}{{ end }}{{ if .Staging.Changed }} \uf046 {{ .Staging.String }}{{ end }}{{ if and (.Working.Changed) (.Staging.Changed) }} |{{ end }}{{ if .Working.Changed }} \uf044 {{ .Working.String }}{{ end }}{{ if gt .StashCount 0 }} \ueb4b {{ .StashCount }}{{ end }} ",
+          "type": "git"
+        },
+        {
+          "type": "claude",
+          "style": "powerline",
+          "background": "#61afef",
+          "foreground": "#ffffff",
+          "powerline_symbol": "",
+          "template": " 󱥤 {{ .Model.DisplayName }}{{ if .Effort }} - {{ .Effort.Level }}{{ end }} "
+        },
+        {
+          "type": "claude",
+          "style": "powerline",
+          "background": "#56b6c2",
+          "foreground": "#193549",
+          "powerline_symbol": "",
+          "template": " ctx {{ .TokenUsagePercent.String }}% {{ .TokenGaugeUsed }} - {{ .FormattedCost }}"
+        },
+        {
+          "type": "text",
+          "style": "powerline",
+          "background": "#98c379",
+          "background_templates": [
+            "{{ $m := trim (readFile (printf \"%s/.ponytail-active\" (default (printf \"%s/.claude\" .Env.HOME) .Env.CLAUDE_CONFIG_DIR))) }}{{ if eq $m \"ultra\" }}#c678dd{{ end }}"
+          ],
+          "foreground": "#193549",
+          "powerline_symbol": "",
+          "template": "{{ if eq .Shell \"claude\" }}{{ $m := trim (readFile (printf \"%s/.ponytail-active\" (default (printf \"%s/.claude\" .Env.HOME) .Env.CLAUDE_CONFIG_DIR))) }}{{ if $m }} PONYTAIL:{{ upper $m }} {{ end }}{{ end }}"
+        },
+        {
+          "type": "aws",
+          "style": "powerline",
+          "background": "#FFA400",
+          "foreground": "#000000",
+          "powerline_symbol": "",
+          "properties": {
+            "display_default": false
+          },
+          "template": "   {{ .Profile }}{{ if .Region }}@{{ .Region }}{{ end }} "
+        }
+      ]
+    }
+  ]
+}
