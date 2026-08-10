@@ -97,7 +97,7 @@ this reasoning is the justification for the whole ports policy in this file, not
 `ADMIN_ADDR` still binds it inside the container for anyone who wants to reach it deliberately
 (e.g. `docker exec` a curl, or uncomment the port for a debugging session with no untrusted box
 running) — and setting it isn't only about deliberate reachability: `adminAddr`'s own schema
-default is `localhost:15000` (`config.rs:306-310`), the same port `ui-gateway` binds
+default is `localhost:15000` (`config.rs:306-311`), the same port `ui-gateway` binds
 (`config.yaml:37-39`), so leaving `ADMIN_ADDR` unset wouldn't just make the admin API
 unreachable from outside the container, it would also collide with the admin UI's own bind.
 
@@ -190,7 +190,7 @@ viewed. `randomSampling: true` is load-bearing, not decorative — Claude Code's
 no incoming trace context, so without it agentgateway never starts a span on its own, and the
 endpoint sits configured but silent, no error either way. The one place a trace does surface
 inside agentgateway's own UI is indirect: the Logs page's rows carry `trace_id`/`span_id`
-(`telemetry/log_store.rs:385-386`) as a join key into Jaeger, not a rendered trace.
+(`telemetry/log_store.rs:386-387`) as a join key into Jaeger, not a rendered trace.
 
 **Tokens and cost are UI-visible, but only through the request-log DB, and cost additionally
 needs the catalog** — two independent failure modes, not one. `config.logging.database.url`
@@ -207,7 +207,7 @@ counted, just with cost stuck null.
 
 **Prometheus metrics are always collected and currently unreachable.**
 `gen_ai_client_token_usage` and `gen_ai_client_cost` are registered unconditionally
-(`telemetry/metrics.rs:205-207`) — there is no `config:` switch that turns metrics collection
+(`telemetry/metrics.rs:311,318`) — there is no `config:` switch that turns metrics collection
 off; `config.metrics` only supports `remove`/`fields.add`, for pruning or annotating series
 that already exist, not gating whether they're collected in the first place. They serve on
 `config.statsAddr`, which defaults to `0.0.0.0:15020`, and `docker-compose.yml` does not
@@ -217,14 +217,18 @@ next to the `:15001` lesson above: unlike the admin API, `:15020` is read-only a
 credentials, so it's far less dangerous to expose, though it is still one more port every
 running box would be able to reach (see Ports above).
 
-**Do not use the UI's "Refresh base costs" button.** With `modelCatalog` configured
-declaratively, as it now is, that button is unnecessary — and using it anyway works against
-this setup, not with it: it tries to write `base-costs.json` into the config file's parent
-directory and persist `config.modelCatalog` back into `config.yaml` itself
-(`ui.rs:676-695`, `BASE_COSTS_FILE` at `ui.rs:30`), but `config.yaml` is mounted `:ro`
-(`./config.yaml:/config.yaml:ro` in `docker-compose.yml`), so the part of that write which
-matters — persisting back into `config.yaml` — has nowhere to land. Leave the button alone
-rather than relying on that failure as a safety net.
+**Do not use the UI's "Refresh base costs" button.** The handler first looks for a configured
+`File` source in `modelCatalog` (`ui.rs:637-645`); this config has one
+(`config.modelCatalog`'s `file: /etc/agentgateway/model-costs.json`), so `configured_file` is
+`Some` and the button takes the branch at `ui.rs:676-678` that sets `base_costs_file` to that
+*same path* — not the `config.yaml`-persist / derived-`base-costs.json` branch, which only runs
+when no `File` source is configured. With a `File` source configured, clicking it makes
+`refresh_models_dev_base_catalog` (`llm/cost/refresh.rs:20-33`) fetch `models.dev`'s catalog
+live over the network and then `fs_err::tokio::write` the result straight onto
+`/etc/agentgateway/model-costs.json` — the tracked, `:ro`-mounted catalog. The write fails
+against that mount, so nothing is actually overwritten, but it still does an unwanted live
+fetch first. Leave the button alone; it has no useful effect here and no reason to be clicked
+when the catalog is already declared in `config.yaml`.
 
 ## Facts established against the schema
 
