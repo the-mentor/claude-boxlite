@@ -87,7 +87,10 @@ that's not viable until upstream lands it.
   `set dotenv-load`): Claude auth (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, plus
   optional `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`/`ANTHROPIC_MODEL`), GitHub
   (`GH_TOKEN`/`GITHUB_TOKEN`), and git identity (`GIT_AUTHOR_*`/`GIT_COMMITTER_*`). Add a var
-  to `passthrough_vars` to make it available in the box.
+  to `passthrough_vars` to make it available in the box. `just up`/`just shell` also always
+  inject `BOX_NAME`, set to the box name being booted/attached to (independent of
+  `passthrough_vars`, since it's not a host env var), so a session can tell which box it's
+  running in.
 - **GitHub auth.** `custom/Dockerfile` configures git's `credential.https://github.com.helper`
   to `gh auth git-credential`, so an injected `GH_TOKEN`/`GITHUB_TOKEN` authenticates both the
   `gh` CLI and `git clone`/`push` over HTTPS with no separate login step.

@@ -212,7 +212,7 @@ up *args=box_name:
       [ -n "$val" ] && envflags="$envflags -e $v"
     done
     envflags="$envflags$extra_envflags"
-    boxlite --home "$home" run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" {{custom_tag}} -- $exec_cmd
+    boxlite --home "$home" run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" -e "BOX_NAME=$name" {{custom_tag}} -- $exec_cmd
 
 # List running boxes across every box-name home under ${BOXLITE_HOME:-$HOME/.boxlite}/boxes.
 # Usage: just list [args...]
@@ -253,7 +253,7 @@ shell *args=box_name:
       eval "val=\${$v:-}"
       [ -n "$val" ] && envflags="$envflags -e $v"
     done
-    boxlite --home "$home" exec -it --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" "$name" -- $exec_cmd
+    boxlite --home "$home" exec -it --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" -e "BOX_NAME=$name" "$name" -- $exec_cmd
 
 # Stop and remove the box
 # Usage: just down [box-name]
