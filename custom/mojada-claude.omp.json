@@ -85,6 +85,17 @@
           "template": " ctx {{ .TokenUsagePercent.String }}% {{ .TokenGaugeUsed }} - {{ .FormattedCost }}"
         },
         {
+          "type": "text",
+          "style": "powerline",
+          "background": "#98c379",
+          "background_templates": [
+            "{{ $m := trim (readFile (printf \"%s/.ponytail-active\" (default (printf \"%s/.claude\" .Env.HOME) .Env.CLAUDE_CONFIG_DIR))) }}{{ if eq $m \"ultra\" }}#c678dd{{ end }}"
+          ],
+          "foreground": "#193549",
+          "powerline_symbol": "",
+          "template": "{{ if eq .Shell \"claude\" }}{{ $m := trim (readFile (printf \"%s/.ponytail-active\" (default (printf \"%s/.claude\" .Env.HOME) .Env.CLAUDE_CONFIG_DIR))) }}{{ if $m }} PONYTAIL:{{ upper $m }} {{ end }}{{ end }}"
+        },
+        {
           "type": "aws",
           "style": "powerline",
           "background": "#FFA400",
