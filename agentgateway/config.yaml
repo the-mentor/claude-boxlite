@@ -205,6 +205,9 @@ config:
     # Catalog::resolve is a bare exact-match lookup on the model id Claude
     # Code sends — no date-suffix stripping. A model missing from
     # model-costs.json still gets its tokens counted, just with cost stuck
-    # null; watch agentgateway_cost_catalog_lookups_total{status="missing"}
-    # and add the exact id it names to fix it.
+    # null. `just gateway-logs` names the exact id — grep for "no catalog
+    # entry for provider/model" — and adding that id verbatim here fixes it.
+    # (There is also an agentgateway_cost_catalog_lookups_total{status="Missing"}
+    # counter, but nothing can scrape it until :15020 is published — see
+    # docs/design/agentgateway.md.)
     - file: /etc/agentgateway/model-costs.json

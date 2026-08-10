@@ -65,17 +65,39 @@ services:
       # Writable named volume (not a bind mount) backing config.yaml's
       # `config.logging.database.url`. sqlx creates the SQLite file itself
       # but not its parent directory, so this only needs to exist and be
-      # writable. Named rather than bind-mounted so `docker compose down`
-      # doesn't leave a root-owned file inside the repo checkout.
+      # writable — but writable BY UID 65532 specifically: agentgateway's
+      # image runs as that user (chainguard/glibc-dynamic's baked-in `USER
+      # 65532`, never overridden), while Docker creates a fresh named
+      # volume's mountpoint as root:root. Without the chown in
+      # agentgateway-logs-init below, sqlx's create_if_missing(true) fails
+      # as a permission error, which is fatal (not degraded) — see that
+      # service's comment. Named rather than bind-mounted so `docker compose
+      # down` doesn't leave a root-owned file inside the repo checkout.
       - agentgateway-logs:/var/lib/agentgateway
     restart: unless-stopped
-    # Not a correctness dependency — MCP targets connect lazily and OTLP
-    # spans are fire-and-forget, so agentgateway starts fine before either is
-    # up. Only orders `docker compose up`/`down` so all three come and go
-    # together.
+    # github-mcp and jaeger: not a correctness dependency — MCP targets
+    # connect lazily and OTLP spans are fire-and-forget, so agentgateway
+    # starts fine before either is up. Only orders `docker compose up`/`down`
+    # so all three come and go together.
+    # agentgateway-logs-init: IS a correctness dependency — must run to
+    # completion first, see that service's comment below.
     depends_on:
-      - github-mcp
-      - jaeger
+      github-mcp:
+        condition: service_started
+      jaeger:
+        condition: service_started
+      agentgateway-logs-init:
+        condition: service_completed_successfully
+
+  # Docker creates a fresh named volume's mountpoint root-owned, but
+  # agentgateway runs as UID 65532 (its chainguard/glibc-dynamic base sets
+  # USER 65532 and the image does not override it), so sqlx cannot create
+  # requests.db without this. One-shot; exits before agentgateway starts.
+  agentgateway-logs-init:
+    image: busybox:1.37.0
+    command: ["chown", "65532:65532", "/var/lib/agentgateway"]
+    volumes:
+      - agentgateway-logs:/var/lib/agentgateway
 
   # GitHub's official MCP server, run in HTTP mode as a sibling service.
   # agentgateway proxies to it by service name over the compose network (see
@@ -118,9 +140,14 @@ services:
       # spans in directly too (see the ports-rule comment at the top of this
       # file), and nothing outside the compose network needs to send spans.
       # 16686 (the trace-viewer UI) is safe to publish under that same rule:
-      # every box can reach it, but it's read-only and holds no credentials,
-      # unlike the admin API this file already refuses to publish above.
-      - "127.0.0.1:16686:16686" # Jaeger UI (read-only, no auth needed)
+      # read-only, holds no credentials, and unlike the admin API this file
+      # already refuses to publish above, it needs no login. But "no
+      # credentials" isn't "nothing sensitive": every box can browse every
+      # OTHER box's LLM request metadata here — models called, timing,
+      # latency, gen_ai span attributes — with none of the basic auth the
+      # :15000 admin UI gates that same kind of data behind. No prompt or
+      # completion content, but it is cross-box request-metadata visibility.
+      - "127.0.0.1:16686:16686" # Jaeger UI (read-only, no auth needed, but see above)
     restart: unless-stopped
 
 # Named volume backing config.yaml's `config.logging.database.url` — see the
