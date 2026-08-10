@@ -27,7 +27,10 @@ services:
       # can reach it too. See README.md "Admin UI".
       - "127.0.0.1:15000:15000" # admin UI (password-protected)
     environment:
-      # Required, or the UI binds container-loopback and the published port is dead.
+      # Required for two reasons: without it, the admin API binds container-loopback only, so
+      # the (commented-out) :15001 publish above would be dead if ever uncommented; and its own
+      # schema default (localhost:15000) collides with ui-gateway's port (config.yaml's
+      # `ui-gateway:` block) — see docs/design/agentgateway.md.
       ADMIN_ADDR: 0.0.0.0:15001
       # May legitimately be empty: a subscription user has no API key, and the
       # /claude passthrough route does not need one.

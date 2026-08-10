@@ -8,17 +8,21 @@ who did what or when, only what the config is and why it has to be that way.
 ## Shape
 
 agentgateway (`cr.agentgateway.dev/agentgateway`, pinned at `v1.4.1`) runs as a long-lived
-Docker Compose service on the host, alongside one sibling container:
+Docker Compose service on the host, alongside two sibling containers:
 
 - **`mcp-gateway`** (port 15003) — serves `/mcp` and `/sse`, multiplexing MCP tool targets.
   One target is live (`github`, proxied to the sibling `github-mcp` container); three more
   ship disabled.
 - **`llm-gateway`** (port 15002) — two Anthropic-Messages-API routes, `/claude` (subscription
   passthrough) and `/api` (keyed), described below.
-- **`ui-gateway`** (port 15000) — the admin UI (config viewer + MCP tool playground) behind
-  HTTP basic auth.
+- **`ui-gateway`** (port 15000) — the admin UI: config viewer, MCP tool playground, and (at
+  `v1.4.1`) Logs, Analytics, Costs, Models, Providers, Guardrails, Keys, and Policies pages —
+  behind HTTP basic auth.
 - **`github-mcp`** — GitHub's official MCP server image, run as a sibling compose service
   with no published host port, reachable only from `agentgateway` over the compose network.
+- **`jaeger`** (port 16686) — OTLP-gRPC trace backend for `config.tracing`; only its
+  read-only trace-viewer UI is published, not the `4317` collection port `agentgateway`
+  reaches it on over the compose network. See Telemetry below.
 
 Each of the three is a separate named entry under `config.yaml`'s top-level `gateways:` map,
 not one gateway with three binds — a name collision between a gateway and a top-level block
@@ -81,16 +85,27 @@ from it," not to "the host alone."
 This was a real, confirmed defect, not a hypothetical hardening exercise: agentgateway's
 built-in admin API (port 15001) was briefly published on 127.0.0.1, and a box was
 independently confirmed able to `curl` its `/config_dump` endpoint and read back real
-credential values, live. That endpoint is unauthenticated by design (it also serves an
-unauthenticated `POST /quitquitquit`), so publishing it at all — loopback or not — hands
-every box a way to read secrets straight out of the running config. It is never published in
-this repo; `ADMIN_ADDR` still binds it inside the container for anyone who wants to reach it
-deliberately (e.g. `docker exec` a curl, or uncomment the port for a debugging session with
-no untrusted box running).
+credential values, live. That endpoint's blast radius is bigger than one endpoint:
+`admin_router` merges the **entire UI router** into the admin server
+(`management/admin.rs:197-198`), so `:15001` exposes not just `/config_dump`,
+`/debug/pprof/*`, `/logging`, and an unauthenticated `POST /quitquitquit`, but the complete UI
+API too — including `POST /api/config` (a live config **write**) and `/api/logs/*` — all with
+no authentication in front of any of it. Publishing it at all, loopback or not, hands every box
+a way to read secrets out of the running config, rewrite that config, and pull request logs —
+this reasoning is the justification for the whole ports policy in this file, not just the
+`/config_dump` credential leak that was first observed. It is never published in this repo;
+`ADMIN_ADDR` still binds it inside the container for anyone who wants to reach it deliberately
+(e.g. `docker exec` a curl, or uncomment the port for a debugging session with no untrusted box
+running) — and setting it isn't only about deliberate reachability: `adminAddr`'s own schema
+default is `localhost:15000` (`config.rs:306-310`), the same port `ui-gateway` binds
+(`config.yaml:37-39`), so leaving `ADMIN_ADDR` unset wouldn't just make the admin API
+unreachable from outside the container, it would also collide with the admin UI's own bind.
 
-The admin UI (port 15000) is different: it serves the same config viewer and tool playground,
-but sits behind `basicAuth` with `mode: strict` (see below), so it's safe to publish even
-though every box can reach it too — a box without the password just gets a 401.
+The admin UI (port 15000) is different: it serves the full UI — config viewer, tool
+playground, and the Logs/Analytics/Costs/Models/Providers/Guardrails/Keys/Policies pages
+listed under Shape above — but sits behind `basicAuth` with `mode: strict` (see below), so
+it's safe to publish even though every box can reach it too — a box without the password just
+gets a 401.
 
 The lesson generalizes: before adding or uncommenting a port in `docker-compose.yml`, ask
 whether the thing behind it authenticates its own requests. Binding `127.0.0.1` answers "is
@@ -158,6 +173,59 @@ to run them directly. Enabling any of them means standing up its own sibling com
 first (images and notes are in the comments above each), which is a per-user choice with real
 image-pull cost, not something to default on.
 
+## Telemetry
+
+Three independent pieces sit behind the `config:` block in `agentgateway/config.yaml`
+(`config.tracing`, `config.logging.database`, `config.modelCatalog`), plus one that isn't
+configured here at all (`config.statsAddr`) — and the split between them is exactly what let
+the admin UI's Logs/Analytics/Costs pages exist and sit visibly empty before that block was
+added.
+
+**Traces are export-only.** There is no traces page anywhere in the v1.4.1 admin UI — no
+`Traces.tsx`, no trace API under `ui/src/api/` — so a trace never renders inside agentgateway's
+own UI, configured or not. `config.tracing` only controls where spans are *exported*: OTLP over
+gRPC (`otlpProtocol: grpc`) to `otlpEndpoint: http://jaeger:4317`, the new `jaeger` sibling
+service (see Shape above), whose own UI at `127.0.0.1:16686` is where traces are actually
+viewed. `randomSampling: true` is load-bearing, not decorative — Claude Code's requests carry
+no incoming trace context, so without it agentgateway never starts a span on its own, and the
+endpoint sits configured but silent, no error either way. The one place a trace does surface
+inside agentgateway's own UI is indirect: the Logs page's rows carry `trace_id`/`span_id`
+(`telemetry/log_store.rs:385-386`) as a join key into Jaeger, not a rendered trace.
+
+**Tokens and cost are UI-visible, but only through the request-log DB, and cost additionally
+needs the catalog** — two independent failure modes, not one. `config.logging.database.url`
+(now `/var/lib/agentgateway/requests.db`, SQLite, on the new `agentgateway-logs` named volume)
+is what the Logs/Analytics pages read tokens, duration, and (when priced) cost from at all;
+without it those pages have no rows regardless of what `config.modelCatalog` says. Database
+configured, catalog missing: requests log with real token counts and a blank cost column.
+Catalog configured, database missing: requests get priced, but nowhere the UI can display them
+— cost calculation and cost *display* are that separable. `config.modelCatalog` now points at
+the tracked `agentgateway/model-costs.json` (`file: /etc/agentgateway/model-costs.json`,
+mounted `:ro`), but `Catalog::resolve` is a bare exact-match lookup on the model id Claude Code
+sends, with no date-suffix stripping — a model missing from that file still gets its tokens
+counted, just with cost stuck null.
+
+**Prometheus metrics are always collected and currently unreachable.**
+`gen_ai_client_token_usage` and `gen_ai_client_cost` are registered unconditionally
+(`telemetry/metrics.rs:205-207`) — there is no `config:` switch that turns metrics collection
+off; `config.metrics` only supports `remove`/`fields.add`, for pruning or annotating series
+that already exist, not gating whether they're collected in the first place. They serve on
+`config.statsAddr`, which defaults to `0.0.0.0:15020`, and `docker-compose.yml` does not
+publish that port, so nothing outside the container can scrape them today. If a Grafana view
+is ever wanted, publishing `:15020` is the whole fix — and it's a smaller ask than it looks
+next to the `:15001` lesson above: unlike the admin API, `:15020` is read-only and carries no
+credentials, so it's far less dangerous to expose, though it is still one more port every
+running box would be able to reach (see Ports above).
+
+**Do not use the UI's "Refresh base costs" button.** With `modelCatalog` configured
+declaratively, as it now is, that button is unnecessary — and using it anyway works against
+this setup, not with it: it tries to write `base-costs.json` into the config file's parent
+directory and persist `config.modelCatalog` back into `config.yaml` itself
+(`ui.rs:676-695`, `BASE_COSTS_FILE` at `ui.rs:30`), but `config.yaml` is mounted `:ro`
+(`./config.yaml:/config.yaml:ro` in `docker-compose.yml`), so the part of that write which
+matters — persisting back into `config.yaml` — has nowhere to land. Leave the button alone
+rather than relying on that failure as a safety net.
+
 ## Facts established against the schema
 
 These were non-obvious enough, and costly enough to re-derive, that they're worth stating
@@ -206,6 +274,10 @@ State these as risks to revisit, not TODOs to feel bad about:
   fields). If one of these is enabled, don't assume the single-string form parses — give it
   the same explicit three-field treatment `github` uses, and validate against the schema
   before trusting it.
+- **Jaeger v1 (`jaegertracing/all-in-one`) is EOL.** `1.76.0`, the version `jaeger` is pinned
+  to, is its last release (EOL 2025-12-31). Migrating to Jaeger v2 (`jaegertracing/jaeger`)
+  isn't a drop-in tag bump — it replaces the single `COLLECTOR_OTLP_ENABLED` env var with an
+  OTel-Collector-style YAML config. Revisit this service if `1.76.0` ever stops being pullable.
 
 ## Verifying a change hasn't broken it
 
