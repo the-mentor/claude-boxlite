@@ -90,8 +90,12 @@ that's not viable until upstream lands it.
   identity (`TERM_PROGRAM` and friends — see below). Add a var to `passthrough_vars` to make
   it available in the box.
 - **Terminal identity passthrough.** `TERM` is forwarded unconditionally (hardcoded on the
-  `boxlite run`/`exec` invocations, defaulting to `xterm-256color`), but `TERM` alone is often
-  the same generic value (`xterm-256color`) across unrelated terminal emulators. Claude Code
+  `boxlite run`/`exec` invocations, defaulting to `xterm-256color`) rather than living in
+  `passthrough_vars` — that list only forwards a var when the host already has it set, with no
+  way to fall back to a default, and `TERM` needs one so the box always renders in color even
+  when the host's `TERM` is unset (headless invocations, some IDE terminals). `TERM` alone is
+  often the same generic value (`xterm-256color`) across unrelated terminal emulators, though, so
+  it can't identify the terminal on its own. Claude Code
   additionally reads `TERM_PROGRAM` (and related vars like `KITTY_WINDOW_ID`,
   `WEZTERM_EXECUTABLE`, `ITERM_SESSION_ID`) to identify the actual terminal emulator, which
   decides e.g. whether to enable the Kitty keyboard protocol that lets a terminal distinguish
