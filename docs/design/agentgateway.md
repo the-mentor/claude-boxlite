@@ -10,10 +10,10 @@ who did what or when, only what the config is and why it has to be that way.
 agentgateway (`cr.agentgateway.dev/agentgateway`, pinned at `v1.4.1`) runs as a long-lived
 Docker Compose service on the host, alongside one sibling container:
 
-- **`mcp-gateway`** (port 3000) — serves `/mcp` and `/sse`, multiplexing MCP tool targets.
+- **`mcp-gateway`** (port 15003) — serves `/mcp` and `/sse`, multiplexing MCP tool targets.
   One target is live (`github`, proxied to the sibling `github-mcp` container); three more
   ship disabled.
-- **`llm-gateway`** (port 3001) — two Anthropic-Messages-API routes, `/claude` (subscription
+- **`llm-gateway`** (port 15002) — two Anthropic-Messages-API routes, `/claude` (subscription
   passthrough) and `/api` (keyed), described below.
 - **`ui-gateway`** (port 15000) — the admin UI (config viewer + MCP tool playground) behind
   HTTP basic auth.
@@ -26,7 +26,7 @@ not one gateway with three binds — a name collision between a gateway and a to
 `mcp`/`llm`/`ui`.
 
 The box's baked MCP config (`/root/.claude.json`, built into the custom image) points at
-`http://host.boxlite.internal:3000/mcp` and needs no change regardless of what else happens
+`http://host.boxlite.internal:15003/mcp` and needs no change regardless of what else happens
 here — that URL is a promise this config keeps, not a value read from it.
 
 ## The credential model
@@ -53,8 +53,8 @@ no schema rule that would catch a regression.
 
 | `.env` state | Vars forwarded to the box | Box's `ANTHROPIC_BASE_URL` |
 |---|---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN` set | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL` | unset, or `…:3001/claude` |
-| `CLAUDE_CODE_OAUTH_TOKEN` unset, `ANTHROPIC_BASE_URL` set | `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` | `…:3001/api` |
+| `CLAUDE_CODE_OAUTH_TOKEN` set | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL` | unset, or `…:15002/claude` |
+| `CLAUDE_CODE_OAUTH_TOKEN` unset, `ANTHROPIC_BASE_URL` set | `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` | `…:15002/api` |
 | neither set | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` | unset (direct to Anthropic) |
 
 Read as four real-world modes: subscription-direct, subscription-through-gateway,
@@ -148,7 +148,7 @@ other — letting the box bypass the gateway entirely, or pointing the gateway a
 of this config using them triggered the admin UI's legacy-config warning. `gateways` is a map
 of listener configs (port/protocol/tls); `mcp:` and each `routes[]` entry attach to a named
 gateway via their own `gateways:` field. The migration is a pure structural rename — the same
-two ports (3000, 3001) are declared the same way underneath, confirmed to be a true runtime
+two ports (15003, 15002) are declared the same way underneath, confirmed to be a true runtime
 no-op (the box's baked MCP URL kept working with zero changes, and the legacy-config warning
 disappeared).
 

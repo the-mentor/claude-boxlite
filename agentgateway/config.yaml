@@ -14,11 +14,11 @@
 
 gateways:
   mcp-gateway:
-    port: 3000
+    port: 15003
     protocol: HTTP
     # CORS lets the admin UI's tool playground (127.0.0.1:15000, a different
-    # origin than :3000) call this MCP endpoint from browser JS. The box
-    # itself talks to :3000 server-to-server and is unaffected either way.
+    # origin than :15003) call this MCP endpoint from browser JS. The box
+    # itself talks to :15003 server-to-server and is unaffected either way.
     # Mcp-Session-Id must be in exposeHeaders: the streamable-HTTP transport
     # returns the session in that response header, which browser JS can't
     # read cross-origin unless it's explicitly exposed.
@@ -29,7 +29,7 @@ gateways:
         ["content-type", "accept", "mcp-session-id", "mcp-protocol-version"]
       exposeHeaders: ["Mcp-Session-Id"]
   llm-gateway:
-    port: 3001
+    port: 15002
     protocol: HTTP
   # Admin UI — on by default, behind basic auth (see `ui:` below). Separate
   # from the unauthenticated admin API (ADMIN_ADDR, port 15001), which this
@@ -57,8 +57,8 @@ ui:
       mode: strict
 
 mcp:
-  # Serves /mcp and /sse automatically on mcp-gateway (port 3000) — the box's
-  # baked http://host.boxlite.internal:3000/mcp needs no change here.
+  # Serves /mcp and /sse automatically on mcp-gateway (port 15003) — the box's
+  # baked http://host.boxlite.internal:15003/mcp needs no change here.
   gateways: mcp-gateway
   targets:
     # GitHub's official MCP server (ghcr.io/github/github-mcp-server), run as
@@ -114,7 +114,7 @@ routes:
   # Subscription OAuth passthrough. NO credential block — that absence is
   # what makes this passthrough: Claude Code's own OAuth token and its
   # anthropic-beta header travel upstream untouched.
-  # Client sets ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/claude
+  # Client sets ANTHROPIC_BASE_URL=http://host.boxlite.internal:15002/claude
   - gateways: llm-gateway
     matches:
       - path:
@@ -137,7 +137,7 @@ routes:
 
   # API key. The gateway attaches the real credential; the box sends a
   # dummy ANTHROPIC_AUTH_TOKEN and never sees the key.
-  # Client sets ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/api
+  # Client sets ANTHROPIC_BASE_URL=http://host.boxlite.internal:15002/api
   - gateways: llm-gateway
     matches:
       - path:

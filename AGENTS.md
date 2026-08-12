@@ -6,10 +6,10 @@ This file provides guidance to AI coding agents when working with code in this r
 
 A two-layer Docker image that runs Claude Code inside a [BoxLite](https://boxliteai.com)
 microVM, with an MCP config baked in pointing at a host-side
-[agentgateway](https://agentgateway.dev) (`http://host.boxlite.internal:3000/mcp`). This repo
+[agentgateway](https://agentgateway.dev) (`http://host.boxlite.internal:15003/mcp`). This repo
 covers both halves: the box side (building the image, booting the VM) and the host side
 (`agentgateway/`, a docker compose service started with `just gateway-up`), which serves MCP
-on `:3000` and two Anthropic routes on `:3001`.
+on `:15003` and two Anthropic routes on `:15002`.
 
 ## Commands
 
@@ -67,8 +67,8 @@ Ctrl-C) the `up` session first.
   it before touching the Dockerfiles, the `justfile`'s image/registry recipes, or
   `passthrough_vars`.
 - **Host-side gateway.** `agentgateway/docker-compose.yml` runs `agentgateway` itself — serving
-  MCP on `:3000` (what the box's baked `/root/.claude.json` points at) and two Anthropic routes
-  on `:3001` — plus a sibling `github-mcp` container with no published host port, and an admin
+  MCP on `:15003` (what the box's baked `/root/.claude.json` points at) and two Anthropic routes
+  on `:15002` — plus a sibling `github-mcp` container with no published host port, and an admin
   UI on `:15000`. Both the credential model (which vars reach the box vs. the gateway, and
   which of the two Anthropic routes is keyed vs. passthrough) and the port model (every
   published port is reachable from any running box, not just from the host, via

@@ -7,7 +7,7 @@ image and boots the box.
 
 This repo covers both halves: the **box side** (building the image, running the VM) and the
 **host side** (`agentgateway/`, run with `just gateway-up`). The box's baked MCP config points
-at `http://host.boxlite.internal:3000/mcp`, which the gateway serves. The gateway can also
+at `http://host.boxlite.internal:15003/mcp`, which the gateway serves. The gateway can also
 broker Anthropic traffic — with an API key it holds the key host-side so the VM never sees it.
 
 ## How it works
@@ -62,9 +62,9 @@ Copy the env template and set your credentials:
 cp .env.example .env
 # Claude auth — pick ONE:
 #   subscription: `claude setup-token`, then CLAUDE_CODE_OAUTH_TOKEN=...
-#                 optionally ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/claude
+#                 optionally ANTHROPIC_BASE_URL=http://host.boxlite.internal:15002/claude
 #   API key:      ANTHROPIC_API_KEY=... plus
-#                 ANTHROPIC_BASE_URL=http://host.boxlite.internal:3001/api
+#                 ANTHROPIC_BASE_URL=http://host.boxlite.internal:15002/api
 #                 and ANTHROPIC_AUTH_TOKEN=unused (value unchecked; the gateway
 #                 attaches the real key, so it never enters the box)
 # Optional GitHub: set GH_TOKEN=... (a PAT) — used by the box AND the gateway's github MCP target
@@ -149,15 +149,15 @@ to "the host only." That's why the admin API's port is not published by default 
 
 | Bind | Serves |
 |---|---|
-| `:3000/mcp` | multiplexed MCP tools (`github` live, proxied to a sibling `github-mcp` container — not GitHub's remote endpoint; others commented in `agentgateway/config.yaml`) |
-| `:3001/claude` | Anthropic passthrough — your subscription OAuth token goes upstream untouched |
-| `:3001/api` | Anthropic-Messages-API keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host; upstream defaults to `api.anthropic.com` but is configurable via `AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST` (e.g. for a LiteLLM key) |
+| `:15003/mcp` | multiplexed MCP tools (`github` live, proxied to a sibling `github-mcp` container — not GitHub's remote endpoint; others commented in `agentgateway/config.yaml`) |
+| `:15002/claude` | Anthropic passthrough — your subscription OAuth token goes upstream untouched |
+| `:15002/api` | Anthropic-Messages-API keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host; upstream defaults to `api.anthropic.com` but is configurable via `AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST` (e.g. for a LiteLLM key) |
 | `:15001/ui` | raw admin API (agentgateway's built-in admin interface) — **not published by default** (commented out in `agentgateway/docker-compose.yml`); its `/config_dump` is unauthenticated and returns real credential values, so publishing it hands every box a way to read `ANTHROPIC_API_KEY` back out. Uncomment the port temporarily for local debugging only while no untrusted box is running |
 | `:15000/ui` | admin UI — **on by default**; the same config viewer and tool playground as the admin API above, behind HTTP basic auth. See "Admin UI" below |
 
-(`:3000` and `:3001` are two separately named gateways in `agentgateway/config.yaml`'s
+(`:15003` and `:15002` are two separately named gateways in `agentgateway/config.yaml`'s
 `gateways:` map — `mcp-gateway` and `llm-gateway` — not one gateway with two binds; the
-`:15000` admin UI is a third, `ui-gateway`.) `:3000` also allows CORS from the admin UI's
+`:15000` admin UI is a third, `ui-gateway`.) `:15003` also allows CORS from the admin UI's
 tool playground (`127.0.0.1:15000`) so it can call the MCP endpoint directly from browser
 JavaScript; the box itself talks to it server-to-server and is unaffected either way.
 

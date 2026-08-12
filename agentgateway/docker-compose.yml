@@ -10,8 +10,8 @@ services:
     container_name: agentgateway
     command: ["-f", "/config.yaml"]
     ports:
-      - "127.0.0.1:3000:3000"   # MCP
-      - "127.0.0.1:3001:3001"   # LLM routes
+      - "127.0.0.1:15003:15003"   # MCP
+      - "127.0.0.1:15002:15002"   # LLM routes
       # DANGER: agentgateway's built-in admin API (15001) is unauthenticated
       # — its /config_dump returns the live config with real credential
       # values, and it serves an unauthenticated POST /quitquitquit. Every
