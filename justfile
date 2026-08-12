@@ -6,8 +6,19 @@ registry   := "localhost:5551"
 box_name   := "claude-box"
 disk_size  := "10"
 # Env vars passed into the box when set (in .env via dotenv-load, or the host
-# env). Unset ones are skipped. Add a var here to make it available in the box.
-passthrough_vars := "CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_MODEL GH_TOKEN GITHUB_TOKEN GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL"
+# env). Unset ones are skipped — there's no way to fall back to a default here,
+# which is why TERM itself is NOT in this list (see the "TERM=..." flag on the
+# `boxlite run`/`exec` invocations below): TERM needs a guaranteed value
+# (defaults to xterm-256color) so the box always renders in color even when
+# the host's TERM is unset. Add a var here to make it available in the box.
+#
+# The TERM_PROGRAM/... group below identifies the actual terminal emulator
+# (TERM alone is often just "xterm-256color" for all of them). Claude Code
+# uses TERM_PROGRAM to decide whether to enable the Kitty keyboard protocol,
+# which is what lets a terminal tell Shift+Enter apart from plain Enter —
+# without it, Shift+Enter silently behaves like Enter inside the box even in
+# terminals (iTerm2, WezTerm, Warp) where it works fine outside the box.
+passthrough_vars := "CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_MODEL GH_TOKEN GITHUB_TOKEN GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM KITTY_WINDOW_ID WEZTERM_EXECUTABLE ITERM_SESSION_ID WT_SESSION VTE_VERSION"
 compose    := "docker compose -f local-development/registry/docker-compose.yml"
 
 default:

@@ -86,8 +86,21 @@ that's not viable until upstream lands it.
   lists the vars forwarded into the box when set (from a gitignored `.env`, loaded via
   `set dotenv-load`): Claude auth (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, plus
   optional `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`/`ANTHROPIC_MODEL`), GitHub
-  (`GH_TOKEN`/`GITHUB_TOKEN`), and git identity (`GIT_AUTHOR_*`/`GIT_COMMITTER_*`). Add a var
-  to `passthrough_vars` to make it available in the box. `just up`/`just exec` also always
+  (`GH_TOKEN`/`GITHUB_TOKEN`), git identity (`GIT_AUTHOR_*`/`GIT_COMMITTER_*`), and terminal
+  identity (`TERM_PROGRAM` and friends — see below). Add a var to `passthrough_vars` to make
+  it available in the box.
+- **Terminal identity passthrough.** `TERM` is forwarded unconditionally (hardcoded on the
+  `boxlite run`/`exec` invocations, defaulting to `xterm-256color`) rather than living in
+  `passthrough_vars` — that list only forwards a var when the host already has it set, with no
+  way to fall back to a default, and `TERM` needs one so the box always renders in color even
+  when the host's `TERM` is unset (headless invocations, some IDE terminals). `TERM` alone is
+  often the same generic value (`xterm-256color`) across unrelated terminal emulators, though, so
+  it can't identify the terminal on its own. Claude Code
+  additionally reads `TERM_PROGRAM` (and related vars like `KITTY_WINDOW_ID`,
+  `WEZTERM_EXECUTABLE`, `ITERM_SESSION_ID`) to identify the actual terminal emulator, which
+  decides e.g. whether to enable the Kitty keyboard protocol that lets a terminal distinguish
+  Shift+Enter from plain Enter. `passthrough_vars` forwards this group so behavior inside the
+  box matches running `claude` directly on the host in the same terminal. `just up`/`just exec` also always
   inject `BOX_NAME`, set to the box name being booted/attached to (independent of
   `passthrough_vars`, since it's not a host env var), so a session can tell which box it's
   running in.
