@@ -19,9 +19,8 @@ RUN curl -s https://ohmyposh.dev/install.sh | bash -s -- -d /usr/local/bin
 # ephemeral boxes where the config file starts fresh on every boot.
 COPY --chmod=0755 claude-wrapper.sh /usr/local/bin/claude-wrapper
 RUN mv /usr/local/bin/claude /usr/local/bin/claude-real \
-    && ln -sf /usr/local/bin/claude-wrapper /usr/local/bin/claude
-
-RUN echo "alias cc='claude'" >> /root/.bashrc
+    && ln -sf /usr/local/bin/claude-wrapper /usr/local/bin/claude \
+    && ln -sf /usr/local/bin/claude-wrapper /usr/local/bin/cc
 
 ARG UV_VERSION=0.12.3
 RUN pip install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
