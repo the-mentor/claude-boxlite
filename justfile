@@ -244,7 +244,7 @@ clean-cache:
 
 # Build images, then boot the box and launch Claude Code.
 # Pass -f/--force to replace an existing box of the same name.
-# Usage: just up-dev [box-name] [-f|--force] [-c|--cwd] [-v host:box ...] [-e KEY=VALUE ...]
+# Usage: just up-dev [box-name] [-f|--force] [-c|--cwd] [-v host:box ...] [-e KEY=VALUE ...] [-i image]
 up-dev *args=box_name: build (up args)
 
 # Boot the box and launch Claude Code (assumes images are already built).
@@ -252,8 +252,9 @@ up-dev *args=box_name: build (up args)
 # Pass -c/--cwd to mount the host current directory onto /workspace.
 # Pass -v/--volume host:box (repeatable) to mount a host folder into the box.
 # Pass -e/--env KEY=VALUE (repeatable) to inject an extra environment variable into the box.
+# Pass -i/--image to override the image path booted (default: custom_tag, i.e. claude-boxlite-custom).
 # Pass -- <cmd> to override the executable launched in the box (default: claude).
-# Usage: just up [box-name] [-f|--force] [-c|--cwd] [-v host:box ...] [-e KEY=VALUE ...] [-- cmd...]
+# Usage: just up [box-name] [-f|--force] [-c|--cwd] [-v host:box ...] [-e KEY=VALUE ...] [-i image] [-- cmd...]
 #
 # Each box name gets its own BOXLITE_HOME (${BOXLITE_HOME:-$HOME/.boxlite}/boxes/<name>).
 # boxlite takes an exclusive lock on the whole BOXLITE_HOME directory for as long as a
@@ -268,7 +269,7 @@ up *args=box_name:
     #!/usr/bin/env sh
     set -eu
     set -- {{args}}
-    name={{box_name}}; force=""; vols=""; exec_cmd="claude"; extra_envflags=""
+    name={{box_name}}; force=""; vols=""; exec_cmd="claude"; extra_envflags=""; image="{{custom_tag}}"
     while [ $# -gt 0 ]; do
       case "$1" in
         --) shift; exec_cmd="$*"; break ;;
@@ -276,6 +277,7 @@ up *args=box_name:
         -c|--cwd) vols="$vols -v {{invocation_directory()}}:/workspace" ;;
         -v|--volume) shift; vols="$vols -v $1" ;;
         -e|--env) shift; extra_envflags="$extra_envflags -e $1" ;;
+        -i|--image) shift; image="$1" ;;
         -*) echo "unknown option: $1" >&2; exit 2 ;;
         *) name="$1" ;;
       esac
@@ -290,7 +292,7 @@ up *args=box_name:
       [ -n "$val" ] && envflags="$envflags -e $v"
     done
     envflags="$envflags$extra_envflags"
-    boxlite --home "$home" run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" -e "BOX_NAME=$name" {{custom_tag}} -- $exec_cmd
+    boxlite --home "$home" run -it --name "$name" --disk-size {{disk_size}} $vols --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" -e "BOX_NAME=$name" "$image" -- $exec_cmd
 
 # List running boxes across every box-name home under ${BOXLITE_HOME:-$HOME/.boxlite}/boxes.
 # Usage: just list [args...]
