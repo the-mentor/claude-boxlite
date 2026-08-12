@@ -21,6 +21,8 @@ COPY --chmod=0755 claude-wrapper.sh /usr/local/bin/claude-wrapper
 RUN mv /usr/local/bin/claude /usr/local/bin/claude-real \
     && ln -sf /usr/local/bin/claude-wrapper /usr/local/bin/claude
 
+RUN echo "alias cc='claude'" >> /root/.bashrc
+
 ARG UV_VERSION=0.12.3
 RUN pip install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
 
