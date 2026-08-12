@@ -16,7 +16,7 @@ separately on the host.
 just up-dev            # build images (base + custom, pushed to local registry), then boot the box
 just up                # boot the box without rebuilding (images must already be built)
 just build              # start the local registry, build base + custom images, push custom
-just shell              # open a session in the running box
+just shell              # open a session in the running box (alias: just exec)
 just list               # list running boxes across every box name (see below), forwarding args to `boxlite list`
 just down               # stop and remove the box
 just registry-up/down   # manage the local docker-compose registry directly
