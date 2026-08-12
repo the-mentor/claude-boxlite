@@ -18,8 +18,22 @@ disk_size  := "10"
 # which is what lets a terminal tell Shift+Enter apart from plain Enter —
 # without it, Shift+Enter silently behaves like Enter inside the box even in
 # terminals (iTerm2, WezTerm, Warp) where it works fine outside the box.
-passthrough_vars := "CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_MODEL GH_TOKEN GITHUB_TOKEN GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM KITTY_WINDOW_ID WEZTERM_EXECUTABLE ITERM_SESSION_ID WT_SESSION VTE_VERSION"
+#
+# Which LLM auth vars reach the box. Precedence: a subscription OAuth token wins
+# and travels with ANTHROPIC_BASE_URL if one is set (the /claude passthrough
+# route), or goes direct if not. Otherwise a set ANTHROPIC_BASE_URL means keyed
+# gateway mode via /api, and the real API key deliberately stays on the host —
+# note it is absent from that branch. That absence is the whole point.
+llm_vars := if env_var_or_default("CLAUDE_CODE_OAUTH_TOKEN", "") != "" {
+    "CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_BASE_URL"
+  } else if env_var_or_default("ANTHROPIC_BASE_URL", "") != "" {
+    "ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL"
+  } else {
+    "ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN"
+  }
+passthrough_vars := llm_vars + " ANTHROPIC_MODEL GH_TOKEN GITHUB_TOKEN GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM KITTY_WINDOW_ID WEZTERM_EXECUTABLE ITERM_SESSION_ID WT_SESSION VTE_VERSION"
 compose    := "docker compose -f local-development/registry/docker-compose.yml"
+gateway    := "docker compose -f agentgateway/docker-compose.yml"
 
 default:
     @just --list
@@ -121,6 +135,50 @@ registry-up:
 # Stop the local image registry
 registry-down:
     {{compose}} down
+
+# Bootstraps agentgateway/htpasswd (gitignored, backs the admin UI's basic auth) from the
+# tracked agentgateway/htpasswd.default template on first run only — if the
+# live file already exists (e.g. a changed password), it is left alone, so a
+# fresh clone gets a working default login with no setup step and a password
+# change never leaves a tracked file modified. Not started by `just up`/`up-dev`.
+# Start the host-side agentgateway (long-lived docker compose service).
+gateway-up:
+    #!/usr/bin/env sh
+    set -eu
+    [ -f agentgateway/htpasswd ] || cp agentgateway/htpasswd.default agentgateway/htpasswd
+    {{gateway}} up -d
+
+# Stop the host-side agentgateway
+gateway-down:
+    {{gateway}} down
+
+# Follow the agentgateway logs
+gateway-logs:
+    {{gateway}} logs -f
+
+# Change the password for the admin UI (on by default at 127.0.0.1:15000, see
+# README.md "Admin UI"), overwriting agentgateway/htpasswd — the live,
+# gitignored file `just gateway-up` bootstraps from the tracked
+# agentgateway/htpasswd.default template — without touching that template, so
+# changing the password never leaves a tracked file modified. Prompts for the
+# password interactively via `htpasswd`/`openssl` themselves (hidden input,
+# not echoed, never passed as an argument — that would land in both shell
+# history and `ps` output). Prefers `htpasswd -B` (bcrypt, apache2-utils);
+# falls back to `openssl passwd -apr1` if htpasswd isn't installed. See README.md "Admin UI".
+# Change the password for the admin UI basic auth.
+gateway-generate-ui-password username="admin":
+    #!/usr/bin/env sh
+    set -eu
+    if command -v htpasswd >/dev/null 2>&1; then
+      htpasswd -Bc agentgateway/htpasswd "{{username}}"
+    elif command -v openssl >/dev/null 2>&1; then
+      hash="$(openssl passwd -apr1)"
+      printf '%s:%s\n' "{{username}}" "$hash" > agentgateway/htpasswd
+    else
+      echo "gateway-generate-ui-password: need htpasswd (apache2-utils) or openssl" >&2
+      exit 1
+    fi
+    echo "Wrote agentgateway/htpasswd for user {{username}}" >&2
 
 # Log in to an authenticated image registry (e.g. ECR) and store credentials in
 # registries.local.json (gitignored). Mirrors `docker login`'s interface.

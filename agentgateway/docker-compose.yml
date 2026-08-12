@@ -1,0 +1,76 @@
+# Host-side agentgateway. Start with: just gateway-up
+#
+# All published ports bind 127.0.0.1 only, which keeps them off the LAN —
+# but every running box reaches host loopback via host.boxlite.internal, so
+# any port published here is reachable from every box, not just the host.
+# See docs/design/agentgateway.md and the admin UI ports entry below.
+services:
+  agentgateway:
+    image: cr.agentgateway.dev/agentgateway:v1.4.1
+    container_name: agentgateway
+    command: ["-f", "/config.yaml"]
+    ports:
+      - "127.0.0.1:15003:15003"   # MCP
+      - "127.0.0.1:15002:15002"   # LLM routes
+      # DANGER: agentgateway's built-in admin API (15001) is unauthenticated
+      # — its /config_dump returns the live config with real credential
+      # values, and it serves an unauthenticated POST /quitquitquit. Every
+      # running box can reach any port published here via
+      # host.boxlite.internal, so publishing this hands every box a way to
+      # read secrets back out. This is NOT the admin UI (that's :15000
+      # below, which is what you want). Uncomment only for temporary local
+      # debugging with no untrusted box running, then remove it again.
+      # - "127.0.0.1:15001:15001" # admin API — UNAUTHENTICATED, leaks real credentials to every running box; the admin UI you want is :15000 below
+      #
+      # Admin UI (15000) — on by default, behind basic auth (config.yaml's
+      # `ui-gateway`/`ui:` blocks), so safe to publish even though every box
+      # can reach it too. See README.md "Admin UI".
+      - "127.0.0.1:15000:15000" # admin UI (password-protected)
+    environment:
+      # Required, or the UI binds container-loopback and the published port is dead.
+      ADMIN_ADDR: 0.0.0.0:15001
+      # May legitimately be empty: a subscription user has no API key, and the
+      # /claude passthrough route does not need one.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      # Upstream for the /api keyed route only (config.yaml's `hostOverride`).
+      # Must be host:port — no scheme, no path; a portless value crash-loops
+      # the gateway, which is why the default below carries an explicit port.
+      AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST: "${AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST:-api.anthropic.com:443}"
+      # Bearer token agentgateway injects into every request to the `github`
+      # MCP target (see config.yaml). May legitimately be empty — compose
+      # must still start without a GH_TOKEN in .env, leaving a degraded
+      # (401-ing) github target rather than a gateway crash. Falls back to
+      # GITHUB_TOKEN; the trailing :- keeps this empty-but-present, never
+      # unset, when neither is set.
+      GH_TOKEN: "${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+    volumes:
+      - ./config.yaml:/config.yaml:ro
+      # Backs the admin UI's basic auth (config.yaml's `ui:` block). `just
+      # gateway-up` copies htpasswd.default here on first run if missing, so
+      # a fresh clone gets a working default login. Gitignored — never
+      # commit this file, it's a live credential.
+      - ./htpasswd:/etc/agentgateway/htpasswd:ro
+    restart: unless-stopped
+    # Not a correctness dependency — MCP targets connect lazily. Only orders
+    # `docker compose up`/`down` so the two come and go together.
+    depends_on:
+      - github-mcp
+
+  # GitHub's official MCP server, run in HTTP mode as a sibling service.
+  # agentgateway proxies to it by service name over the compose network (see
+  # the `github` target in config.yaml) instead of GitHub's remote endpoint,
+  # which this Docker host cannot reach at all.
+  github-mcp:
+    image: ghcr.io/github/github-mcp-server:v1.8.0
+    container_name: github-mcp
+    # --listen-host pinned explicitly rather than relying on the flag's
+    # documented default, so this stays reachable across the compose network
+    # regardless of upstream ever changing that default.
+    command: ["http", "--port", "9090", "--listen-host", "0.0.0.0"]
+    # No GITHUB_PERSONAL_ACCESS_TOKEN here — that's a stdio-mode credential;
+    # this server ignores it in http mode and enforces its own OAuth layer
+    # instead. The PAT lives on agentgateway's side (GH_TOKEN above,
+    # injected as a Bearer header) — see docs/design/agentgateway.md.
+    # Deliberately no `ports:` — reached only over the compose network by
+    # service name. Do NOT publish a host port.
+    restart: unless-stopped
