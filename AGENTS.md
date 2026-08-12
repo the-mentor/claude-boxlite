@@ -16,7 +16,7 @@ separately on the host.
 just up-dev            # build images (base + custom, pushed to local registry), then boot the box
 just up                # boot the box without rebuilding (images must already be built)
 just build              # start the local registry, build base + custom images, push custom
-just shell              # open a session in the running box
+just exec               # open a session in the running box (alias: just shell)
 just list               # list running boxes across every box name (see below), forwarding args to `boxlite list`
 just down               # stop and remove the box
 just registry-up/down   # manage the local docker-compose registry directly
@@ -29,8 +29,8 @@ just install/uninstall  # symlink the cb wrapper onto PATH (see below)
 `-v host:box` (mount an arbitrary host folder, repeatable), `-e KEY=VALUE` (inject an extra
 environment variable into the box, repeatable, appended to `envflags` alongside
 `passthrough_vars`), and `-- <cmd>` (override the executable launched in the box; defaults to
-`claude`, e.g. `just up -- bash`). `shell` takes the same optional box name and `-- <cmd>`
-override (e.g. `just shell -- bash`) to exec something other than `claude` in the running box.
+`claude`, e.g. `just up -- bash`). `exec` takes the same optional box name and `-- <cmd>`
+override (e.g. `just exec -- bash`) to exec something other than `claude` in the running box.
 
 `just` only looks for a justfile in the current or a parent directory, so these recipes only
 work from inside the repo by default. `just install` symlinks `bin/cb` — a
@@ -53,7 +53,7 @@ for as long as a `boxlite run`/`exec` process is attached to it — not just on 
 so two boxes sharing a home can't run concurrently (`Failed to acquire runtime lock ...
 Another BoxliteRuntime is already using directory`). Splitting the home per box name is what
 lets `just up box-a` and `just up box-b` run at the same time from separate terminals. This
-also means `just shell <name>` only succeeds once the `just up <name>` session for that same
+also means `just exec <name>` only succeeds once the `just up <name>` session for that same
 box has exited — both commands open their own local runtime and take the same per-home lock,
 so a box can only be attached from one CLI process at a time; that's a limitation of
 BoxLite's CLI process model, not something specific to this repo. `just list` and `just
@@ -87,7 +87,7 @@ that's not viable until upstream lands it.
   `set dotenv-load`): Claude auth (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, plus
   optional `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`/`ANTHROPIC_MODEL`), GitHub
   (`GH_TOKEN`/`GITHUB_TOKEN`), and git identity (`GIT_AUTHOR_*`/`GIT_COMMITTER_*`). Add a var
-  to `passthrough_vars` to make it available in the box. `just up`/`just shell` also always
+  to `passthrough_vars` to make it available in the box. `just up`/`just exec` also always
   inject `BOX_NAME`, set to the box name being booted/attached to (independent of
   `passthrough_vars`, since it's not a host env var), so a session can tell which box it's
   running in.

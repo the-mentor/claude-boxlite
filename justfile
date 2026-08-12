@@ -233,8 +233,11 @@ list *args:
 # as `boxlite run`, so this only succeeds once that lock is free - i.e. once the `just up`
 # session for this box has exited (this was already true before per-box homes; it's a
 # limitation of the boxlite CLI's process model, not something this recipe adds).
+# `shell` is an alias for this recipe.
+# Usage: just exec [box-name] [-- cmd...]
 # Usage: just shell [box-name] [-- cmd...]
-shell *args=box_name:
+alias shell := exec
+exec *args=box_name:
     #!/usr/bin/env sh
     set -eu
     set -- {{args}}
