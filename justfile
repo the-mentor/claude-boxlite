@@ -297,7 +297,7 @@ list *args:
     done
 
 # Open a session in the running box.
-# Pass -- <cmd> to override the executable launched in the box (default: claude).
+# Pass -- <cmd> to override the executable launched in the box (default: claude --continue).
 # Note: `boxlite exec` also opens its own local runtime and takes the same per-home lock
 # as `boxlite run`, so this only succeeds once that lock is free - i.e. once the `just up`
 # session for this box has exited (this was already true before per-box homes; it's a
@@ -310,7 +310,7 @@ exec *args=box_name:
     #!/usr/bin/env sh
     set -eu
     set -- {{args}}
-    name={{box_name}}; exec_cmd="claude"
+    name={{box_name}}; exec_cmd="claude --continue"
     while [ $# -gt 0 ]; do
       case "$1" in
         --) shift; exec_cmd="$*"; break ;;

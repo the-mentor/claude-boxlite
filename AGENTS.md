@@ -33,7 +33,8 @@ just install/uninstall  # symlink the cb wrapper onto PATH (see below)
 environment variable into the box, repeatable, appended to `envflags` alongside
 `passthrough_vars`), and `-- <cmd>` (override the executable launched in the box; defaults to
 `claude`, e.g. `just up -- bash`). `exec` takes the same optional box name and `-- <cmd>`
-override (e.g. `just exec -- bash`) to exec something other than `claude` in the running box.
+override (e.g. `just exec -- bash`) to exec something other than `claude --continue` (its
+default) in the running box.
 
 `just` only looks for a justfile in the current or a parent directory, so these recipes only
 work from inside the repo by default. `just install` symlinks `bin/cb` — a
