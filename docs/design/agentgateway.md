@@ -217,6 +217,40 @@ next to the `:15001` lesson above: unlike the admin API, `:15020` is read-only a
 credentials, so it's far less dangerous to expose, though it is still one more port every
 running box would be able to reach (see Ports above).
 
+**Prompt/completion body logging is always on and cannot be gated at runtime**, via
+`frontendPolicies.accessLog.database.add` in `config.yaml`. This writes the raw
+request/response text into the same `requests.db` row `config.logging.database`
+populates with tokens/cost — a different thing from that, and it's real conversation
+content (secrets, proprietary code, whatever the box sent) landing on disk. `accessLog`
+has no per-route scoping in the schema (`LocalFrontendPolicies` is the single
+top-level, all-traffic block — there is no equivalent field under `routes[].policies`),
+so the CEL expression runs for MCP traffic too; `has(llm.prompt)` guards that, since
+MCP requests carry no `llm` context.
+
+An earlier revision of this config tried to gate this behind an `AGENTGATEWAY_LOG_PROMPTS`
+env var with a CEL ternary (`"$AGENTGATEWAY_LOG_PROMPTS" == "true" && has(llm.prompt) ?
+string(llm.prompt) : ''`). It never worked, and the admin UI showed real prompt content
+even with the var unset or `false`. Root cause, confirmed against the pinned `v1.4.1`
+tag's source (not just HEAD, which has since diverged — GitHub's code search API only
+searches the default branch, so use `get_file_contents` with an explicit
+`ref: refs/tags/v1.4.1` when checking claims like this one against what's actually
+deployed): `crates/agentgateway/src/cel/mod.rs`'s `attributes_for()` derives which
+attributes an expression needs by statically walking its *syntax tree* for tokens
+matching `["llm","prompt",..]` / `["llm","completion",..]` — it never evaluates the
+expression, so a guard around `llm.prompt` is invisible to it. Any CEL expression
+anywhere in `config.yaml` that so much as mentions `llm.prompt`/`llm.completion`
+registers `Attributes::LlmPrompt`/`LlmCompletion` unconditionally at config-load time.
+That flips `ContextBuilder::needs_llm_prompt()`/`needs_llm_completion()` to `true`
+gateway-wide, which makes the LLM backend actually buffer the raw prompt/completion
+into `LLMInfo`. `telemetry/log.rs`'s request-finalization code then stores whatever
+`LLMInfo.prompt`/`.completion` holds into the log row's `payload` — with no CEL
+re-check at that point, so the ternary's runtime result never mattered. v1.4.1 has no
+config-level toggle for this (`DatabaseLlmMode`/`logging.database.llm` exists upstream
+past v1.4.1 but is unreleased). The only way to disable this block is to delete it
+from `config.yaml` and restart; there is no env var that can do it. Verify with `just
+gateway-logs`, or `POST /api/logs/get` — same check the telemetry verification plan
+already prescribes for `hasPayload`.
+
 **Do not use the UI's "Refresh base costs" button.** The handler first looks for a configured
 `File` source in `modelCatalog` (`ui.rs:637-645`); this config has one
 (`config.modelCatalog`'s `file: /etc/agentgateway/model-costs.json`), so `configured_file` is

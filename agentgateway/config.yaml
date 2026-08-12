@@ -192,9 +192,10 @@ config:
       # create_if_missing(true), so the file appears on its own but the
       # parent directory does not — docker-compose.yml mounts a writable
       # named volume at this exact path (see agentgateway-logs there). This
-      # is the request log the admin UI reads tokens/cost/duration from; it
-      # does not itself log prompt/completion content — that's the separate,
-      # deliberately-unset frontendPolicies.accessLog.database.add.
+      # is the request log the admin UI reads tokens/cost/duration from. It
+      # ALSO captures full raw prompt/completion content, unconditionally,
+      # because of the frontendPolicies.accessLog.database.add block below —
+      # see the warning there before assuming this is metadata-only.
       url: /var/lib/agentgateway/requests.db
 
   modelCatalog:
@@ -211,3 +212,29 @@ config:
     # counter, but nothing can scrape it until :15020 is published — see
     # docs/design/agentgateway.md.)
     - file: /etc/agentgateway/model-costs.json
+
+# WARNING: full raw prompt/completion body logging, ALWAYS ON, cannot be gated at
+# runtime — see docs/design/agentgateway.md. This is a DIFFERENT thing from
+# config.logging.database above: that logs tokens/cost/duration for every request;
+# this writes the actual request/response text (whatever the box sent — secrets,
+# proprietary code, all of it) into the same requests.db row.
+#
+# There used to be an AGENTGATEWAY_LOG_PROMPTS env var here as a runtime toggle. It
+# never worked: agentgateway v1.4.1 registers a CEL expression's logging attributes
+# by statically scanning its syntax tree for `llm.prompt`/`llm.completion` tokens
+# (crates/agentgateway/src/cel/mod.rs's attributes_for()) — it does not evaluate the
+# expression to see if that branch is reachable. Merely referencing those tokens
+# below, guarded or not, switches on unconditional prompt/completion capture for the
+# whole gateway. v1.4.1 has no config-level toggle for this (a real one,
+# `logging.database.llm`, exists upstream post-1.4.1 but isn't released yet).
+# Removing this whole `add:` block is therefore the only way to turn this off.
+#
+# There is no per-route scoping for accessLog either — it's global — so has(llm.*)
+# guards MCP traffic, which carries no llm context, from erroring on requests to
+# mcp-gateway.
+frontendPolicies:
+  accessLog:
+    database:
+      add:
+        prompt: "has(llm.prompt) ? string(llm.prompt) : ''"
+        completion: "has(llm.completion) ? string(llm.completion) : ''"
