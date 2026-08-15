@@ -110,9 +110,24 @@ just gateway-generate-ui-password # change the admin UI's default credentials, s
 
 Use `just up-dev` the first time (or after changing the image); use `just up` for a fast
 boot once the images are built. Both run Claude Code interactively inside the box, so they
-need a valid `CLAUDE_CODE_OAUTH_TOKEN` in `.env`. The `agentgateway` MCP server is
-configured user-scoped in `/root/.claude.json`, so Claude Code points at the host gateway
-in any project — including a mounted host directory.
+need a valid `CLAUDE_CODE_OAUTH_TOKEN` in `.env`.
+
+`build`, `build-image`, and `build-base` forward any extra arguments to `docker build`, and
+`build`/`build-image` pass them down to the layers they depend on:
+
+```bash
+just build --no-cache       # rebuild base + custom from scratch, ignoring the layer cache
+just build-base --no-cache  # same, base image only
+just build --pull           # refresh the node:26-trixie-slim base too
+```
+
+Reach for `--no-cache` when a build step whose command text never changes has gone stale —
+Docker keeps serving the cached layer for `npm install -g @anthropic-ai/claude-code` or the
+oh-my-posh `curl | sh` installer, so a plain `just build` will not pick up newer versions of
+either.
+
+The `agentgateway` MCP server is configured user-scoped in `/root/.claude.json`, so Claude
+Code points at the host gateway in any project — including a mounted host directory.
 
 `up`, `up-dev`, `shell`, and `down` take an optional box name (default `claude-box`), so you
 can run several boxes side by side. `up`/`up-dev` also accept `-f`/`--force` to replace an
