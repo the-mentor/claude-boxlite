@@ -17,6 +17,7 @@ on `:15003` and two Anthropic routes on `:15002`.
 just up-dev            # build images (base + custom, pushed to local registry), then boot the box
 just up                # boot the box without rebuilding (images must already be built)
 just build              # start the local registry, build base + custom images, push custom
+just build --no-cache   # same, bypassing the Docker layer cache (see below)
 just exec               # open a session in the running box (alias: just shell)
 just list               # list running boxes across every box name (see below), forwarding args to `boxlite list`
 just down               # stop and remove the box
@@ -35,6 +36,14 @@ environment variable into the box, repeatable, appended to `envflags` alongside
 `claude`, e.g. `just up -- bash`). `exec` takes the same optional box name and `-- <cmd>`
 override (e.g. `just exec -- bash`) to exec something other than `claude --continue` (its
 default) in the running box.
+
+`build`, `build-image`, and `build-base` are variadic: everything after the recipe name is
+forwarded verbatim to `docker build`, and `build`/`build-image` also pass it down to the
+recipes they depend on, so `just build --no-cache` rebuilds both layers cache-free (`--pull`,
+`--progress=plain` and friends work the same way). `--no-cache` is the one that matters in
+practice: the version-fetching `RUN` steps (`npm install -g @anthropic-ai/claude-code`, the
+oh-my-posh installer, `apt upgrade`) have fixed command text, so Docker keeps replaying their
+cached layers no matter how stale they get.
 
 `just` only looks for a justfile in the current or a parent directory, so these recipes only
 work from inside the repo by default. `just install` symlinks `bin/cb` — a

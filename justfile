@@ -186,16 +186,25 @@ gateway-generate-ui-password username="admin":
 registry-login *args:
     ./scripts/registry-login.py {{args}}
 
-build-base:
-    docker build -t {{base_tag}} base/
+# The three build recipes forward extra arguments straight to `docker build`, so
+# `--no-cache` (the reason this exists: Docker caches `RUN` layers by command text, so a
+# `curl | sh` installer or an unpinned `npm i -g` keeps serving a stale version until the
+# cache is bypassed) reaches both image builds. `build`/`build-image` pass the same args
+# down to their dependencies, so `just build --no-cache` rebuilds base and custom from
+# scratch. Any other `docker build` flag works the same way (e.g. `--pull`, `--progress=plain`).
+# Usage: just build-base [docker-build-args...]
+build-base *args:
+    docker build {{args}} -t {{base_tag}} base/
 
-build-image: build-base registry-up
-    docker build -t {{custom_tag}} custom/
+# Usage: just build-image [docker-build-args...]
+build-image *args: (build-base args) registry-up
+    docker build {{args}} -t {{custom_tag}} custom/
     docker tag {{custom_tag}} {{registry}}/library/{{custom_tag}}
     docker push {{registry}}/library/{{custom_tag}}
     just clean-cache
 
-build: build-image
+# Usage: just build [docker-build-args...]
+build *args: (build-image args)
 
 # Refresh the custom image and sweep orphaned image blobs from boxlite's cache.
 # BoxLite caches image tags immutably and has no `rmi`, so a rebuilt :latest is
