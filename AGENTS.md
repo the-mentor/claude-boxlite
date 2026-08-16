@@ -32,8 +32,9 @@ just install/uninstall  # symlink the cb wrapper onto PATH (see below)
 (replace an existing box of the same name), `-c`/`--cwd` (mount host cwd onto `/workspace`),
 `-v host:box` (mount an arbitrary host folder, repeatable), `-e KEY=VALUE` (inject an extra
 environment variable into the box, repeatable, appended to `envflags` alongside
-`passthrough_vars`), and `-- <cmd>` (override the executable launched in the box; defaults to
-`claude`, e.g. `just up -- bash`). `exec` takes the same optional box name and `-- <cmd>`
+`passthrough_vars`), `-i`/`--image` (override the image path passed to `boxlite run`; defaults
+to `custom_tag`, i.e. `claude-boxlite-custom`), and `-- <cmd>` (override the executable
+launched in the box; defaults to `claude`, e.g. `just up -- bash`). `exec` takes the same optional box name and `-- <cmd>`
 override (e.g. `just exec -- bash`) to exec something other than `claude --continue` (its
 default) in the running box.
 
