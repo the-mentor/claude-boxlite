@@ -27,10 +27,9 @@ services:
       # can reach it too. See README.md "Admin UI".
       - "127.0.0.1:15000:15000" # admin UI (password-protected)
     environment:
-      # Required for two reasons: without it, the admin API binds container-loopback only, so
-      # the (commented-out) :15001 publish above would be dead if ever uncommented; and its own
-      # schema default (localhost:15000) collides with ui-gateway's port (config.yaml's
-      # `ui-gateway:` block) — see docs/design/agentgateway.md.
+      # Required: binds the admin API off container-loopback (needed if the
+      # :15001 publish above is ever uncommented) and avoids its default port
+      # (15000) colliding with ui-gateway's — see docs/design/agentgateway.md.
       ADMIN_ADDR: 0.0.0.0:15001
       # May legitimately be empty: a subscription user has no API key, and the
       # /claude passthrough route does not need one.
@@ -54,33 +53,19 @@ services:
       # commit this file, it's a live credential.
       - ./htpasswd:/etc/agentgateway/htpasswd:ro
       # Cost catalog for config.yaml's `config.modelCatalog`. Tracked in git
-      # (not gitignored like htpasswd above — it holds no credential) rather
-      # than generated at boot by agctl: no new host tooling, no network
-      # fetch on startup, exact model ids stay under the user's control, and
-      # it's reviewable in git like any other file here. Tradeoff: prices go
-      # stale and must be updated by hand — the catalog's JSON schema
-      # (unknown fields rejected) has no room for an in-file comment saying
-      # so, hence recording it here instead.
+      # (holds no credential, unlike htpasswd) rather than generated at boot:
+      # no new tooling, reviewable, user controls exact model ids. Tradeoff:
+      # prices go stale and need manual updates.
       - ./model-costs.json:/etc/agentgateway/model-costs.json:ro
-      # Writable named volume (not a bind mount) backing config.yaml's
-      # `config.logging.database.url`. sqlx creates the SQLite file itself
-      # but not its parent directory, so this only needs to exist and be
-      # writable — but writable BY UID 65532 specifically: agentgateway's
-      # image runs as that user (chainguard/glibc-dynamic's baked-in `USER
-      # 65532`, never overridden), while Docker creates a fresh named
-      # volume's mountpoint as root:root. Without the chown in
-      # agentgateway-logs-init below, sqlx's create_if_missing(true) fails
-      # as a permission error, which is fatal (not degraded) — see that
-      # service's comment. Named rather than bind-mounted so `docker compose
-      # down` doesn't leave a root-owned file inside the repo checkout.
+      # Backs config.yaml's `config.logging.database.url`. Named (not bind-
+      # mounted) so `docker compose down` doesn't leave a root-owned file in
+      # the repo checkout. Docker creates it root:root, but agentgateway runs
+      # as UID 65532 — see agentgateway-logs-init below, which chowns it first.
       - agentgateway-logs:/var/lib/agentgateway
     restart: unless-stopped
-    # github-mcp and jaeger: not a correctness dependency — MCP targets
-    # connect lazily and OTLP spans are fire-and-forget, so agentgateway
-    # starts fine before either is up. Only orders `docker compose up`/`down`
-    # so all three come and go together.
-    # agentgateway-logs-init: IS a correctness dependency — must run to
-    # completion first, see that service's comment below.
+    # github-mcp/jaeger: ordering only, not a correctness dependency (MCP
+    # connects lazily, spans are fire-and-forget). agentgateway-logs-init IS
+    # required — must complete first (see its comment below).
     depends_on:
       github-mcp:
         condition: service_started
@@ -89,10 +74,9 @@ services:
       agentgateway-logs-init:
         condition: service_completed_successfully
 
-  # Docker creates a fresh named volume's mountpoint root-owned, but
-  # agentgateway runs as UID 65532 (its chainguard/glibc-dynamic base sets
-  # USER 65532 and the image does not override it), so sqlx cannot create
-  # requests.db without this. One-shot; exits before agentgateway starts.
+  # Chowns the volume to UID 65532 (agentgateway's non-root user) before it
+  # starts — Docker creates named volumes root:root, and sqlx can't create
+  # requests.db without write access. One-shot; exits before agentgateway starts.
   agentgateway-logs-init:
     image: busybox:1.37.0
     command: ["chown", "65532:65532", "/var/lib/agentgateway"]
@@ -118,36 +102,26 @@ services:
     # service name. Do NOT publish a host port.
     restart: unless-stopped
 
-  # OTLP-gRPC trace backend for config.yaml's `config.tracing` block.
-  # jaegertracing/all-in-one accepts OTLP gRPC directly (COLLECTOR_OTLP_ENABLED
-  # below), so no separate otel-collector is needed in front of it.
+  # OTLP-gRPC trace backend for config.yaml's `config.tracing`. all-in-one
+  # accepts OTLP gRPC directly (COLLECTOR_OTLP_ENABLED below) — no separate
+  # otel-collector needed.
   jaeger:
-    # Jaeger v1 (this all-in-one image) reached end-of-life 2025-12-31 —
-    # 1.76.0 is its last release, no further tags will appear. Pinned anyway
-    # because it's still the simplest thing that accepts OTLP gRPC via a
-    # single env var; Jaeger v2 (image jaegertracing/jaeger) replaces that
-    # with an OTel-Collector-style YAML config and is not a drop-in swap.
-    # Revisit this service if 1.76.0 ever stops being pullable.
+    # Jaeger v1 EOL'd 2025-12-31; 1.76.0 is its last tag. Pinned anyway — still
+    # the simplest OTLP-gRPC-via-env-var option. v2 (jaegertracing/jaeger)
+    # needs an OTel-Collector-style config and isn't a drop-in swap.
     image: jaegertracing/all-in-one:1.76.0
     container_name: jaeger
     environment:
-      # Makes this image accept OTLP over gRPC on 4317 with no separate
-      # otel-collector in front of it.
+      # Enables OTLP gRPC on 4317 without a separate otel-collector.
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
-      # NOT 4317 — agentgateway reaches collection at jaeger:4317 over the
-      # compose network only; publishing it would let every running box push
-      # spans in directly too (see the ports-rule comment at the top of this
-      # file), and nothing outside the compose network needs to send spans.
-      # 16686 (the trace-viewer UI) is safe to publish under that same rule:
-      # read-only, holds no credentials, and unlike the admin API this file
-      # already refuses to publish above, it needs no login. But "no
-      # credentials" isn't "nothing sensitive": every box can browse every
-      # OTHER box's LLM request metadata here — models called, timing,
-      # latency, gen_ai span attributes — with none of the basic auth the
-      # :15000 admin UI gates that same kind of data behind. No prompt or
-      # completion content, but it is cross-box request-metadata visibility.
-      - "127.0.0.1:16686:16686" # Jaeger UI (read-only, no auth needed, but see above)
+      # NOT 4317 — agentgateway reaches jaeger:4317 over the compose network
+      # only; no box needs to send spans directly. 16686 (trace UI) is
+      # published: read-only, no login, unlike the admin API above. But every
+      # box can browse every OTHER box's request metadata here (models,
+      # timing, gen_ai attributes) with none of the :15000 admin UI's auth —
+      # no prompt/completion content, but cross-box metadata visibility.
+      - "127.0.0.1:16686:16686" # Jaeger UI (read-only, no auth — see above)
     restart: unless-stopped
 
 # Named volume backing config.yaml's `config.logging.database.url` — see the

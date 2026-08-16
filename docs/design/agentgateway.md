@@ -82,30 +82,23 @@ loopback proxy, so every running box reaches any port published here exactly as 
 the host itself. "Loopback-only" narrows the audience to "this machine plus every box booted
 from it," not to "the host alone."
 
-This was a real, confirmed defect, not a hypothetical hardening exercise: agentgateway's
-built-in admin API (port 15001) was briefly published on 127.0.0.1, and a box was
-independently confirmed able to `curl` its `/config_dump` endpoint and read back real
-credential values, live. That endpoint's blast radius is bigger than one endpoint:
-`admin_router` merges the **entire UI router** into the admin server
-(`management/admin.rs:197-198`), so `:15001` exposes not just `/config_dump`,
-`/debug/pprof/*`, `/logging`, and an unauthenticated `POST /quitquitquit`, but the complete UI
-API too — including `POST /api/config` (a live config **write**) and `/api/logs/*` — all with
-no authentication in front of any of it. Publishing it at all, loopback or not, hands every box
-a way to read secrets out of the running config, rewrite that config, and pull request logs —
-this reasoning is the justification for the whole ports policy in this file, not just the
-`/config_dump` credential leak that was first observed. It is never published in this repo;
-`ADMIN_ADDR` still binds it inside the container for anyone who wants to reach it deliberately
-(e.g. `docker exec` a curl, or uncomment the port for a debugging session with no untrusted box
-running) — and setting it isn't only about deliberate reachability: `adminAddr`'s own schema
-default is `localhost:15000` (`config.rs:306-311`), the same port `ui-gateway` binds
-(`config.yaml:37-39`), so leaving `ADMIN_ADDR` unset wouldn't just make the admin API
-unreachable from outside the container, it would also collide with the admin UI's own bind.
+This was a real, confirmed defect: agentgateway's admin API (port 15001) was briefly
+published on 127.0.0.1, and a box was confirmed able to `curl` `/config_dump` and read back
+real credential values. Its blast radius is bigger than that one endpoint: `admin_router`
+merges the **entire UI router** into the admin server (`management/admin.rs:197-198`), so
+`:15001` also exposes `/debug/pprof/*`, `/logging`, an unauthenticated `POST /quitquitquit`,
+`POST /api/config` (a live config **write**), and `/api/logs/*` — none of it authenticated.
+This is the justification for the whole ports policy in this file, not just the original
+`/config_dump` leak. It is never published here; `ADMIN_ADDR` still binds it inside the
+container for deliberate access (`docker exec` a curl, or uncomment the port with no untrusted
+box running). Setting it also matters beyond reachability: `adminAddr`'s schema default is
+`localhost:15000` (`config.rs:306-311`), the same port `ui-gateway` binds (`config.yaml:37-39`)
+— leaving it unset would collide with the admin UI's own bind, not just leave the admin API
+unreachable from outside the container.
 
-The admin UI (port 15000) is different: it serves the full UI — config viewer, tool
-playground, and the Logs/Analytics/Costs/Models/Providers/Guardrails/Keys/Policies pages
-listed under Shape above — but sits behind `basicAuth` with `mode: strict` (see below), so
-it's safe to publish even though every box can reach it too — a box without the password just
-gets a 401.
+The admin UI (port 15000) is different: same full UI (Shape above lists its pages) but behind
+`basicAuth` with `mode: strict` (see below) — safe to publish even though every box can reach
+it; a box without the password just gets a 401.
 
 The lesson generalizes: before adding or uncommenting a port in `docker-compose.yml`, ask
 whether the thing behind it authenticates its own requests. Binding `127.0.0.1` answers "is
@@ -175,94 +168,74 @@ image-pull cost, not something to default on.
 
 ## Telemetry
 
-Three independent pieces sit behind the `config:` block in `agentgateway/config.yaml`
-(`config.tracing`, `config.logging.database`, `config.modelCatalog`), plus one that isn't
-configured here at all (`config.statsAddr`) — and the split between them is exactly what let
-the admin UI's Logs/Analytics/Costs pages exist and sit visibly empty before that block was
-added.
+Four independent pieces: `config.tracing`, `config.logging.database`, and
+`config.modelCatalog` (all under `config:` in `config.yaml`), plus `config.statsAddr` (not
+configured here). Before this block was added, the admin UI's Logs/Analytics/Costs pages
+existed but sat visibly empty — this split explains why.
 
-**Traces are export-only.** There is no traces page anywhere in the v1.4.1 admin UI — no
-`Traces.tsx`, no trace API under `ui/src/api/` — so a trace never renders inside agentgateway's
-own UI, configured or not. `config.tracing` only controls where spans are *exported*: OTLP over
-gRPC (`otlpProtocol: grpc`) to `otlpEndpoint: http://jaeger:4317`, the new `jaeger` sibling
-service (see Shape above), whose own UI at `127.0.0.1:16686` is where traces are actually
-viewed. `randomSampling: true` is load-bearing, not decorative — Claude Code's requests carry
-no incoming trace context, so without it agentgateway never starts a span on its own, and the
-endpoint sits configured but silent, no error either way. The one place a trace does surface
-inside agentgateway's own UI is indirect: the Logs page's rows carry `trace_id`/`span_id`
-(`telemetry/log_store.rs:386-387`) as a join key into Jaeger, not a rendered trace.
+**Traces are export-only.** The v1.4.1 admin UI has no traces page (no `Traces.tsx`, no trace
+API under `ui/src/api/`), so `config.tracing` only controls *export*: OTLP/gRPC to
+`jaeger:4317` (the new `jaeger` sibling, see Shape above), viewed at its own UI on
+`127.0.0.1:16686`. `randomSampling: true` is load-bearing — Claude Code sends no incoming
+trace context, so without it agentgateway never starts a span, and the endpoint sits
+configured but silent with no error. Traces surface indirectly in agentgateway's own UI only
+via the Logs page's `trace_id`/`span_id` columns (`telemetry/log_store.rs:386-387`), a join
+key into Jaeger, not a rendered trace.
 
-**Tokens and cost are UI-visible, but only through the request-log DB, and cost additionally
-needs the catalog** — two independent failure modes, not one. `config.logging.database.url`
-(now `/var/lib/agentgateway/requests.db`, SQLite, on the new `agentgateway-logs` named volume)
-is what the Logs/Analytics pages read tokens, duration, and (when priced) cost from at all;
-without it those pages have no rows regardless of what `config.modelCatalog` says. Database
-configured, catalog missing: requests log with real token counts and a blank cost column.
-Catalog configured, database missing: requests get priced, but nowhere the UI can display them
-— cost calculation and cost *display* are that separable. `config.modelCatalog` now points at
-the tracked `agentgateway/model-costs.json` (`file: /etc/agentgateway/model-costs.json`,
-mounted `:ro`), but `Catalog::resolve` is a bare exact-match lookup on the model id Claude Code
-sends, with no date-suffix stripping — a model missing from that file still gets its tokens
-counted, just with cost stuck null.
+**Tokens/cost have two independent failure modes.** `config.logging.database.url`
+(`/var/lib/agentgateway/requests.db`, SQLite, on the `agentgateway-logs` volume) is what the
+Logs/Analytics pages read tokens, duration, and cost from at all — without it, no rows,
+regardless of the catalog. Database configured + catalog missing: real token counts, blank
+cost column. Catalog configured + database missing: requests get priced but nowhere to
+display it. `config.modelCatalog` points at the tracked `agentgateway/model-costs.json`
+(`file: /etc/agentgateway/model-costs.json`, mounted `:ro`); `Catalog::resolve` is a bare
+exact-match on the model id, no date-suffix stripping, so a missing model still counts tokens
+with cost stuck null.
 
-**Prometheus metrics are always collected and currently unreachable.**
-`gen_ai_client_token_usage` and `gen_ai_client_cost` are registered unconditionally
-(`telemetry/metrics.rs:311,318`) — there is no `config:` switch that turns metrics collection
-off; `config.metrics` only supports `remove`/`fields.add`, for pruning or annotating series
-that already exist, not gating whether they're collected in the first place. They serve on
-`config.statsAddr`, which defaults to `0.0.0.0:15020`, and `docker-compose.yml` does not
-publish that port, so nothing outside the container can scrape them today. If a Grafana view
-is ever wanted, publishing `:15020` is the whole fix — and it's a smaller ask than it looks
-next to the `:15001` lesson above: unlike the admin API, `:15020` is read-only and carries no
-credentials, so it's far less dangerous to expose, though it is still one more port every
-running box would be able to reach (see Ports above).
+**Prometheus metrics are always collected, currently unreachable.**
+`gen_ai_client_token_usage`/`gen_ai_client_cost` are registered unconditionally
+(`telemetry/metrics.rs:311,318`) — `config.metrics` only supports `remove`/`fields.add`
+(pruning/annotating existing series), not gating collection. They serve on
+`config.statsAddr` (default `0.0.0.0:15020`), unpublished in `docker-compose.yml`, so nothing
+outside the container can scrape them today. Publishing `:15020` is the whole fix for a
+Grafana view — safer than the `:15001` lesson above since it's read-only with no credentials,
+though still one more port every box can reach (see Ports above).
 
-**Prompt/completion body logging is always on and cannot be gated at runtime**, via
-`frontendPolicies.accessLog.database.add` in `config.yaml`. This writes the raw
-request/response text into the same `requests.db` row `config.logging.database`
-populates with tokens/cost — a different thing from that, and it's real conversation
-content (secrets, proprietary code, whatever the box sent) landing on disk. `accessLog`
-has no per-route scoping in the schema (`LocalFrontendPolicies` is the single
-top-level, all-traffic block — there is no equivalent field under `routes[].policies`),
-so the CEL expression runs for MCP traffic too; `has(llm.prompt)` guards that, since
-MCP requests carry no `llm` context.
+**Prompt/completion body logging is always on, cannot be gated at runtime**
+(`frontendPolicies.accessLog.database.add` in `config.yaml`). It writes raw request/response
+text — real conversation content, secrets included — into the same `requests.db` row
+`config.logging.database` populates with tokens/cost. `accessLog` has no per-route scoping
+(`LocalFrontendPolicies` is one top-level, all-traffic block; no equivalent under
+`routes[].policies`), so the CEL expression runs for MCP traffic too; `has(llm.prompt)` guards
+that, since MCP carries no `llm` context.
 
-An earlier revision of this config tried to gate this behind an `AGENTGATEWAY_LOG_PROMPTS`
-env var with a CEL ternary (`"$AGENTGATEWAY_LOG_PROMPTS" == "true" && has(llm.prompt) ?
-string(llm.prompt) : ''`). It never worked, and the admin UI showed real prompt content
-even with the var unset or `false`. Root cause, confirmed against the pinned `v1.4.1`
-tag's source (not just HEAD, which has since diverged — GitHub's code search API only
-searches the default branch, so use `get_file_contents` with an explicit
-`ref: refs/tags/v1.4.1` when checking claims like this one against what's actually
-deployed): `crates/agentgateway/src/cel/mod.rs`'s `attributes_for()` derives which
-attributes an expression needs by statically walking its *syntax tree* for tokens
-matching `["llm","prompt",..]` / `["llm","completion",..]` — it never evaluates the
-expression, so a guard around `llm.prompt` is invisible to it. Any CEL expression
-anywhere in `config.yaml` that so much as mentions `llm.prompt`/`llm.completion`
-registers `Attributes::LlmPrompt`/`LlmCompletion` unconditionally at config-load time.
-That flips `ContextBuilder::needs_llm_prompt()`/`needs_llm_completion()` to `true`
-gateway-wide, which makes the LLM backend actually buffer the raw prompt/completion
-into `LLMInfo`. `telemetry/log.rs`'s request-finalization code then stores whatever
-`LLMInfo.prompt`/`.completion` holds into the log row's `payload` — with no CEL
-re-check at that point, so the ternary's runtime result never mattered. v1.4.1 has no
-config-level toggle for this (`DatabaseLlmMode`/`logging.database.llm` exists upstream
-past v1.4.1 but is unreleased). The only way to disable this block is to delete it
-from `config.yaml` and restart; there is no env var that can do it. Verify with `just
-gateway-logs`, or `POST /api/logs/get` — same check the telemetry verification plan
-already prescribes for `hasPayload`.
+An earlier revision gated this behind an `AGENTGATEWAY_LOG_PROMPTS` env var with a CEL ternary
+(`"$AGENTGATEWAY_LOG_PROMPTS" == "true" && has(llm.prompt) ? string(llm.prompt) : ''`). It
+never worked — the admin UI showed real prompt content with the var unset or `false`. Root
+cause (confirmed against the pinned `v1.4.1` tag's source, not HEAD — GitHub code search only
+covers the default branch, so use `get_file_contents` with `ref: refs/tags/v1.4.1` for claims
+like this): `crates/agentgateway/src/cel/mod.rs`'s `attributes_for()` derives an expression's
+needed attributes by statically walking its *syntax tree* for `llm.prompt`/`llm.completion`
+tokens — it never evaluates the expression, so a guard around them is invisible to it. Any CEL
+expression anywhere in `config.yaml` mentioning those tokens registers
+`Attributes::LlmPrompt`/`LlmCompletion` unconditionally at load time, flipping
+`ContextBuilder::needs_llm_prompt()`/`needs_llm_completion()` to `true` gateway-wide — which
+makes the LLM backend buffer the raw prompt/completion into `LLMInfo` regardless.
+`telemetry/log.rs` then stores `LLMInfo.prompt`/`.completion` into the log row's `payload`
+with no CEL re-check, so the ternary's runtime result never mattered. v1.4.1 has no
+config-level toggle (`DatabaseLlmMode`/`logging.database.llm` exists upstream, unreleased) —
+deleting this block and restarting is the only way to disable it. Verify with `just
+gateway-logs` or `POST /api/logs/get` (the `hasPayload` check the verification plan already
+prescribes).
 
-**Do not use the UI's "Refresh base costs" button.** The handler first looks for a configured
-`File` source in `modelCatalog` (`ui.rs:637-645`); this config has one
-(`config.modelCatalog`'s `file: /etc/agentgateway/model-costs.json`), so `configured_file` is
-`Some` and the button takes the branch at `ui.rs:676-678` that sets `base_costs_file` to that
-*same path* — not the `config.yaml`-persist / derived-`base-costs.json` branch, which only runs
-when no `File` source is configured. With a `File` source configured, clicking it makes
-`refresh_models_dev_base_catalog` (`llm/cost/refresh.rs:20-33`) fetch `models.dev`'s catalog
-live over the network and then `fs_err::tokio::write` the result straight onto
-`/etc/agentgateway/model-costs.json` — the tracked, `:ro`-mounted catalog. The write fails
-against that mount, so nothing is actually overwritten, but it still does an unwanted live
-fetch first. Leave the button alone; it has no useful effect here and no reason to be clicked
-when the catalog is already declared in `config.yaml`.
+**Don't use the UI's "Refresh base costs" button.** Since `modelCatalog` has a configured
+`File` source (`ui.rs:637-645`), the button takes the branch at `ui.rs:676-678` that sets
+`base_costs_file` to that same path — not the `config.yaml`-persist branch, which only runs
+with no `File` source. It calls `refresh_models_dev_base_catalog` (`llm/cost/refresh.rs:20-33`)
+to fetch `models.dev`'s catalog live, then tries to write it onto
+`/etc/agentgateway/model-costs.json` — which fails since that mount is `:ro`, so nothing's
+overwritten, but the unwanted live fetch still happens. No reason to click it when the catalog
+is already declared in `config.yaml`.
 
 ## Facts established against the schema
 
@@ -312,10 +285,10 @@ State these as risks to revisit, not TODOs to feel bad about:
   fields). If one of these is enabled, don't assume the single-string form parses — give it
   the same explicit three-field treatment `github` uses, and validate against the schema
   before trusting it.
-- **Jaeger v1 (`jaegertracing/all-in-one`) is EOL.** `1.76.0`, the version `jaeger` is pinned
-  to, is its last release (EOL 2025-12-31). Migrating to Jaeger v2 (`jaegertracing/jaeger`)
-  isn't a drop-in tag bump — it replaces the single `COLLECTOR_OTLP_ENABLED` env var with an
-  OTel-Collector-style YAML config. Revisit this service if `1.76.0` ever stops being pullable.
+- **Jaeger v1 (`jaegertracing/all-in-one`) is EOL** — `1.76.0` (pinned here) is its last
+  release (EOL 2025-12-31). Migrating to v2 (`jaegertracing/jaeger`) isn't a drop-in bump: it
+  replaces `COLLECTOR_OTLP_ENABLED` with an OTel-Collector-style YAML config. Revisit if
+  `1.76.0` stops being pullable.
 
 ## Verifying a change hasn't broken it
 

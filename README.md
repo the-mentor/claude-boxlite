@@ -169,7 +169,7 @@ to "the host only." That's why the admin API's port is not published by default 
 | `:15002/api` | Anthropic-Messages-API keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host; upstream defaults to `api.anthropic.com` but is configurable via `AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST` (e.g. for a LiteLLM key) |
 | `:15001/ui` | raw admin API (agentgateway's built-in admin interface) — **not published by default** (commented out in `agentgateway/docker-compose.yml`); its `/config_dump` is unauthenticated and returns real credential values, so publishing it hands every box a way to read `ANTHROPIC_API_KEY` back out. Uncomment the port temporarily for local debugging only while no untrusted box is running |
 | `:15000/ui` | admin UI — **on by default**; the same config viewer and tool playground as the admin API above, behind HTTP basic auth. See "Admin UI" below |
-| `:16686` | Jaeger's own trace-viewer UI — read-only, no auth. Traces sent via `config.tracing` are viewed here, not in agentgateway's own admin UI, which has no traces page. Reachable from every box like everything else in this table, but holds no credentials |
+| `:16686` | Jaeger's trace-viewer UI — read-only, no auth. Traces from `config.tracing` are viewed here; agentgateway's own admin UI has no traces page. Reachable from every box, holds no credentials |
 
 (`:15003` and `:15002` are two separately named gateways in `agentgateway/config.yaml`'s
 `gateways:` map — `mcp-gateway` and `llm-gateway` — not one gateway with two binds; the

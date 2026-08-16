@@ -172,66 +172,45 @@ routes:
                 /v1/messages/count_tokens: anthropicTokenCount
                 "*": passthrough
 
-# Telemetry: traces (Jaeger, over the compose network), the request-log DB
-# (what makes tokens show up per-request in the admin UI), and the cost
-# catalog (what makes the UI's cost column non-null). See
-# docs/design/agentgateway.md.
+# Telemetry: traces (Jaeger), request-log DB (per-request tokens in the admin
+# UI), and cost catalog (non-null cost column). See docs/design/agentgateway.md.
 config:
   tracing:
     otlpEndpoint: http://jaeger:4317
     otlpProtocol: grpc
-    # Defaults to false. This is what starts a span when the incoming
-    # request carries no trace context — always true for Claude Code, which
-    # never sends one. Without it: valid endpoint, zero spans, no error.
-    # Do not delete this line as "redundant" — nothing traces without it.
+    # Defaults to false; must be true since Claude Code never sends trace
+    # context. Without it: valid endpoint, zero spans, no error.
     randomSampling: true
 
   logging:
     database:
-      # Any non-postgres:// value is treated as SQLite. sqlx opens it with
-      # create_if_missing(true), so the file appears on its own but the
-      # parent directory does not — docker-compose.yml mounts a writable
-      # named volume at this exact path (see agentgateway-logs there). This
-      # is the request log the admin UI reads tokens/cost/duration from. It
-      # ALSO captures full raw prompt/completion content, unconditionally,
-      # because of the frontendPolicies.accessLog.database.add block below —
-      # see the warning there before assuming this is metadata-only.
+      # Non-postgres:// value = SQLite; sqlx creates the file but not the
+      # parent dir, so docker-compose.yml mounts a writable volume here.
+      # Also captures full raw prompt/completion text — see the
+      # frontendPolicies.accessLog warning below.
       url: /var/lib/agentgateway/requests.db
 
   modelCatalog:
-    # Tracked file, mounted :ro in docker-compose.yml alongside htpasswd —
-    # see the comment on that mount for why tracked instead of generated,
-    # and model-costs.json for the exact models/prices it carries.
-    #
-    # Catalog::resolve is a bare exact-match lookup on the model id Claude
-    # Code sends — no date-suffix stripping. A model missing from
-    # model-costs.json still gets its tokens counted, just with cost stuck
-    # null. `just gateway-logs` names the exact id — grep for "no catalog
-    # entry for provider/model" — and adding that id verbatim here fixes it.
-    # (There is also an agentgateway_cost_catalog_lookups_total{status="Missing"}
-    # counter, but nothing can scrape it until :15020 is published — see
-    # docs/design/agentgateway.md.)
+    # Exact-match lookup on the model id — no date-suffix stripping. Missing
+    # model = tokens counted, cost stays null. Fix by grepping
+    # `just gateway-logs` for "no catalog entry for provider/model" and
+    # adding that id to model-costs.json (mounted :ro in docker-compose.yml).
     - file: /etc/agentgateway/model-costs.json
 
-# WARNING: full raw prompt/completion body logging, ALWAYS ON, cannot be gated at
-# runtime — see docs/design/agentgateway.md. This is a DIFFERENT thing from
-# config.logging.database above: that logs tokens/cost/duration for every request;
-# this writes the actual request/response text (whatever the box sent — secrets,
-# proprietary code, all of it) into the same requests.db row.
+# WARNING: full raw prompt/completion text, ALWAYS ON, cannot be gated at runtime
+# — see docs/design/agentgateway.md. Different from config.logging.database
+# above (that's tokens/cost/duration); this writes the actual request/response
+# body — secrets, proprietary code, everything — into the same requests.db row.
 #
-# There used to be an AGENTGATEWAY_LOG_PROMPTS env var here as a runtime toggle. It
-# never worked: agentgateway v1.4.1 registers a CEL expression's logging attributes
-# by statically scanning its syntax tree for `llm.prompt`/`llm.completion` tokens
-# (crates/agentgateway/src/cel/mod.rs's attributes_for()) — it does not evaluate the
-# expression to see if that branch is reachable. Merely referencing those tokens
-# below, guarded or not, switches on unconditional prompt/completion capture for the
-# whole gateway. v1.4.1 has no config-level toggle for this (a real one,
-# `logging.database.llm`, exists upstream post-1.4.1 but isn't released yet).
-# Removing this whole `add:` block is therefore the only way to turn this off.
+# No env-var toggle works: agentgateway v1.4.1 statically scans this CEL
+# expression's syntax tree for `llm.prompt`/`llm.completion` tokens
+# (cel/mod.rs's attributes_for()) rather than evaluating it, so merely
+# referencing them here — guarded or not — turns on capture gateway-wide.
+# (A real toggle, `logging.database.llm`, exists upstream post-1.4.1.)
+# Deleting this whole `add:` block is the only way to disable it.
 #
-# There is no per-route scoping for accessLog either — it's global — so has(llm.*)
-# guards MCP traffic, which carries no llm context, from erroring on requests to
-# mcp-gateway.
+# has(llm.*) guards MCP traffic (no llm context) from erroring — accessLog
+# has no per-route scoping, so this applies gateway-wide either way.
 frontendPolicies:
   accessLog:
     database:
