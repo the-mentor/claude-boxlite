@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["boxlite==0.9.7"]
+# ///
 """Validate BoxLite's host-side secret injection against this repo's custom image.
 
 BoxLite's `Secret` substitutes a real credential into outbound HTTPS requests at
@@ -21,8 +25,14 @@ Run it from the repo root with whichever credentials you want to exercise:
 Checks whose credential is unset are skipped, not failed. Nothing here writes to
 the repo, and the box is removed on exit unless --keep is passed.
 
-Requires `pip install boxlite` on the host (verified against 0.9.7) and the
-custom image already built and pushed (`just build`).
+Dependencies are declared inline (PEP 723) and resolved by `uv run`, which the
+shebang invokes — there is no environment to create and nothing to install. The
+boxlite pin matches the CLI version this repo's claims were verified against, so
+bump both together or the spike stops testing what you actually run.
+
+Needs `uv` on the host (the base image already installs it, but this runs
+host-side) and the custom image already built and pushed (`just build`). Running
+it under a bare `python3` also works if `boxlite` is importable there.
 """
 import argparse
 import json
@@ -173,7 +183,11 @@ def main():
     args = parser.parse_args()
 
     if Secret is None:
-        sys.exit("boxlite-secrets-spike: `pip install boxlite` first (verified against 0.9.7)")
+        sys.exit(
+            "boxlite-secrets-spike: boxlite is not importable. Run this script directly "
+            "(./scripts/boxlite-secrets-spike.py) so uv resolves the inline dependency, "
+            "or `uv run scripts/boxlite-secrets-spike.py`."
+        )
 
     gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
