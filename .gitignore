@@ -8,3 +8,7 @@ agentgateway/htpasswd
 docs/superpowers/
 local-development/
 .worktrees/
+
+# Python bytecode from running the scripts/ helpers locally
+__pycache__/
+*.pyc
