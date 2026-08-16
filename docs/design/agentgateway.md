@@ -8,17 +8,21 @@ who did what or when, only what the config is and why it has to be that way.
 ## Shape
 
 agentgateway (`cr.agentgateway.dev/agentgateway`, pinned at `v1.4.1`) runs as a long-lived
-Docker Compose service on the host, alongside one sibling container:
+Docker Compose service on the host, alongside two sibling containers:
 
 - **`mcp-gateway`** (port 15003) — serves `/mcp` and `/sse`, multiplexing MCP tool targets.
   One target is live (`github`, proxied to the sibling `github-mcp` container); three more
   ship disabled.
 - **`llm-gateway`** (port 15002) — two Anthropic-Messages-API routes, `/claude` (subscription
   passthrough) and `/api` (keyed), described below.
-- **`ui-gateway`** (port 15000) — the admin UI (config viewer + MCP tool playground) behind
-  HTTP basic auth.
+- **`ui-gateway`** (port 15000) — the admin UI: config viewer, MCP tool playground, and (at
+  `v1.4.1`) Logs, Analytics, Costs, Models, Providers, Guardrails, Keys, and Policies pages —
+  behind HTTP basic auth.
 - **`github-mcp`** — GitHub's official MCP server image, run as a sibling compose service
   with no published host port, reachable only from `agentgateway` over the compose network.
+- **`jaeger`** (port 16686) — OTLP-gRPC trace backend for `config.tracing`; only its
+  read-only trace-viewer UI is published, not the `4317` collection port `agentgateway`
+  reaches it on over the compose network. See Telemetry below.
 
 Each of the three is a separate named entry under `config.yaml`'s top-level `gateways:` map,
 not one gateway with three binds — a name collision between a gateway and a top-level block
@@ -78,19 +82,23 @@ loopback proxy, so every running box reaches any port published here exactly as 
 the host itself. "Loopback-only" narrows the audience to "this machine plus every box booted
 from it," not to "the host alone."
 
-This was a real, confirmed defect, not a hypothetical hardening exercise: agentgateway's
-built-in admin API (port 15001) was briefly published on 127.0.0.1, and a box was
-independently confirmed able to `curl` its `/config_dump` endpoint and read back real
-credential values, live. That endpoint is unauthenticated by design (it also serves an
-unauthenticated `POST /quitquitquit`), so publishing it at all — loopback or not — hands
-every box a way to read secrets straight out of the running config. It is never published in
-this repo; `ADMIN_ADDR` still binds it inside the container for anyone who wants to reach it
-deliberately (e.g. `docker exec` a curl, or uncomment the port for a debugging session with
-no untrusted box running).
+This was a real, confirmed defect: agentgateway's admin API (port 15001) was briefly
+published on 127.0.0.1, and a box was confirmed able to `curl` `/config_dump` and read back
+real credential values. Its blast radius is bigger than that one endpoint: `admin_router`
+merges the **entire UI router** into the admin server (`management/admin.rs:197-198`), so
+`:15001` also exposes `/debug/pprof/*`, `/logging`, an unauthenticated `POST /quitquitquit`,
+`POST /api/config` (a live config **write**), and `/api/logs/*` — none of it authenticated.
+This is the justification for the whole ports policy in this file, not just the original
+`/config_dump` leak. It is never published here; `ADMIN_ADDR` still binds it inside the
+container for deliberate access (`docker exec` a curl, or uncomment the port with no untrusted
+box running). Setting it also matters beyond reachability: `adminAddr`'s schema default is
+`localhost:15000` (`config.rs:306-311`), the same port `ui-gateway` binds (`config.yaml:37-39`)
+— leaving it unset would collide with the admin UI's own bind, not just leave the admin API
+unreachable from outside the container.
 
-The admin UI (port 15000) is different: it serves the same config viewer and tool playground,
-but sits behind `basicAuth` with `mode: strict` (see below), so it's safe to publish even
-though every box can reach it too — a box without the password just gets a 401.
+The admin UI (port 15000) is different: same full UI (Shape above lists its pages) but behind
+`basicAuth` with `mode: strict` (see below) — safe to publish even though every box can reach
+it; a box without the password just gets a 401.
 
 The lesson generalizes: before adding or uncommenting a port in `docker-compose.yml`, ask
 whether the thing behind it authenticates its own requests. Binding `127.0.0.1` answers "is
@@ -158,6 +166,77 @@ to run them directly. Enabling any of them means standing up its own sibling com
 first (images and notes are in the comments above each), which is a per-user choice with real
 image-pull cost, not something to default on.
 
+## Telemetry
+
+Four independent pieces: `config.tracing`, `config.logging.database`, and
+`config.modelCatalog` (all under `config:` in `config.yaml`), plus `config.statsAddr` (not
+configured here). Before this block was added, the admin UI's Logs/Analytics/Costs pages
+existed but sat visibly empty — this split explains why.
+
+**Traces are export-only.** The v1.4.1 admin UI has no traces page (no `Traces.tsx`, no trace
+API under `ui/src/api/`), so `config.tracing` only controls *export*: OTLP/gRPC to
+`jaeger:4317` (the new `jaeger` sibling, see Shape above), viewed at its own UI on
+`127.0.0.1:16686`. `randomSampling: true` is load-bearing — Claude Code sends no incoming
+trace context, so without it agentgateway never starts a span, and the endpoint sits
+configured but silent with no error. Traces surface indirectly in agentgateway's own UI only
+via the Logs page's `trace_id`/`span_id` columns (`telemetry/log_store.rs:386-387`), a join
+key into Jaeger, not a rendered trace.
+
+**Tokens/cost have two independent failure modes.** `config.logging.database.url`
+(`/var/lib/agentgateway/requests.db`, SQLite, on the `agentgateway-logs` volume) is what the
+Logs/Analytics pages read tokens, duration, and cost from at all — without it, no rows,
+regardless of the catalog. Database configured + catalog missing: real token counts, blank
+cost column. Catalog configured + database missing: requests get priced but nowhere to
+display it. `config.modelCatalog` points at the tracked `agentgateway/model-costs.json`
+(`file: /etc/agentgateway/model-costs.json`, mounted `:ro`); `Catalog::resolve` is a bare
+exact-match on the model id, no date-suffix stripping, so a missing model still counts tokens
+with cost stuck null.
+
+**Prometheus metrics are always collected, currently unreachable.**
+`gen_ai_client_token_usage`/`gen_ai_client_cost` are registered unconditionally
+(`telemetry/metrics.rs:311,318`) — `config.metrics` only supports `remove`/`fields.add`
+(pruning/annotating existing series), not gating collection. They serve on
+`config.statsAddr` (default `0.0.0.0:15020`), unpublished in `docker-compose.yml`, so nothing
+outside the container can scrape them today. Publishing `:15020` is the whole fix for a
+Grafana view — safer than the `:15001` lesson above since it's read-only with no credentials,
+though still one more port every box can reach (see Ports above).
+
+**Prompt/completion body logging is always on, cannot be gated at runtime**
+(`frontendPolicies.accessLog.database.add` in `config.yaml`). It writes raw request/response
+text — real conversation content, secrets included — into the same `requests.db` row
+`config.logging.database` populates with tokens/cost. `accessLog` has no per-route scoping
+(`LocalFrontendPolicies` is one top-level, all-traffic block; no equivalent under
+`routes[].policies`), so the CEL expression runs for MCP traffic too; `has(llm.prompt)` guards
+that, since MCP carries no `llm` context.
+
+An earlier revision gated this behind an `AGENTGATEWAY_LOG_PROMPTS` env var with a CEL ternary
+(`"$AGENTGATEWAY_LOG_PROMPTS" == "true" && has(llm.prompt) ? string(llm.prompt) : ''`). It
+never worked — the admin UI showed real prompt content with the var unset or `false`. Root
+cause (confirmed against the pinned `v1.4.1` tag's source, not HEAD — GitHub code search only
+covers the default branch, so use `get_file_contents` with `ref: refs/tags/v1.4.1` for claims
+like this): `crates/agentgateway/src/cel/mod.rs`'s `attributes_for()` derives an expression's
+needed attributes by statically walking its *syntax tree* for `llm.prompt`/`llm.completion`
+tokens — it never evaluates the expression, so a guard around them is invisible to it. Any CEL
+expression anywhere in `config.yaml` mentioning those tokens registers
+`Attributes::LlmPrompt`/`LlmCompletion` unconditionally at load time, flipping
+`ContextBuilder::needs_llm_prompt()`/`needs_llm_completion()` to `true` gateway-wide — which
+makes the LLM backend buffer the raw prompt/completion into `LLMInfo` regardless.
+`telemetry/log.rs` then stores `LLMInfo.prompt`/`.completion` into the log row's `payload`
+with no CEL re-check, so the ternary's runtime result never mattered. v1.4.1 has no
+config-level toggle (`DatabaseLlmMode`/`logging.database.llm` exists upstream, unreleased) —
+deleting this block and restarting is the only way to disable it. Verify with `just
+gateway-logs` or `POST /api/logs/get` (the `hasPayload` check the verification plan already
+prescribes).
+
+**Don't use the UI's "Refresh base costs" button.** Since `modelCatalog` has a configured
+`File` source (`ui.rs:637-645`), the button takes the branch at `ui.rs:676-678` that sets
+`base_costs_file` to that same path — not the `config.yaml`-persist branch, which only runs
+with no `File` source. It calls `refresh_models_dev_base_catalog` (`llm/cost/refresh.rs:20-33`)
+to fetch `models.dev`'s catalog live, then tries to write it onto
+`/etc/agentgateway/model-costs.json` — which fails since that mount is `:ro`, so nothing's
+overwritten, but the unwanted live fetch still happens. No reason to click it when the catalog
+is already declared in `config.yaml`.
+
 ## Facts established against the schema
 
 These were non-obvious enough, and costly enough to re-derive, that they're worth stating
@@ -206,6 +285,10 @@ State these as risks to revisit, not TODOs to feel bad about:
   fields). If one of these is enabled, don't assume the single-string form parses — give it
   the same explicit three-field treatment `github` uses, and validate against the schema
   before trusting it.
+- **Jaeger v1 (`jaegertracing/all-in-one`) is EOL** — `1.76.0` (pinned here) is its last
+  release (EOL 2025-12-31). Migrating to v2 (`jaegertracing/jaeger`) isn't a drop-in bump: it
+  replaces `COLLECTOR_OTLP_ENABLED` with an OTel-Collector-style YAML config. Revisit if
+  `1.76.0` stops being pullable.
 
 ## Verifying a change hasn't broken it
 

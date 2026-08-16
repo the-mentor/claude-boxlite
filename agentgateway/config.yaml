@@ -171,3 +171,49 @@ routes:
                 /v1/messages: messages
                 /v1/messages/count_tokens: anthropicTokenCount
                 "*": passthrough
+
+# Telemetry: traces (Jaeger), request-log DB (per-request tokens in the admin
+# UI), and cost catalog (non-null cost column). See docs/design/agentgateway.md.
+config:
+  tracing:
+    otlpEndpoint: http://jaeger:4317
+    otlpProtocol: grpc
+    # Defaults to false; must be true since Claude Code never sends trace
+    # context. Without it: valid endpoint, zero spans, no error.
+    randomSampling: true
+
+  logging:
+    database:
+      # Non-postgres:// value = SQLite; sqlx creates the file but not the
+      # parent dir, so docker-compose.yml mounts a writable volume here.
+      # Also captures full raw prompt/completion text — see the
+      # frontendPolicies.accessLog warning below.
+      url: /var/lib/agentgateway/requests.db
+
+  modelCatalog:
+    # Exact-match lookup on the model id — no date-suffix stripping. Missing
+    # model = tokens counted, cost stays null. Fix by grepping
+    # `just gateway-logs` for "no catalog entry for provider/model" and
+    # adding that id to model-costs.json (mounted :ro in docker-compose.yml).
+    - file: /etc/agentgateway/model-costs.json
+
+# WARNING: full raw prompt/completion text, ALWAYS ON, cannot be gated at runtime
+# — see docs/design/agentgateway.md. Different from config.logging.database
+# above (that's tokens/cost/duration); this writes the actual request/response
+# body — secrets, proprietary code, everything — into the same requests.db row.
+#
+# No env-var toggle works: agentgateway v1.4.1 statically scans this CEL
+# expression's syntax tree for `llm.prompt`/`llm.completion` tokens
+# (cel/mod.rs's attributes_for()) rather than evaluating it, so merely
+# referencing them here — guarded or not — turns on capture gateway-wide.
+# (A real toggle, `logging.database.llm`, exists upstream post-1.4.1.)
+# Deleting this whole `add:` block is the only way to disable it.
+#
+# has(llm.*) guards MCP traffic (no llm context) from erroring — accessLog
+# has no per-route scoping, so this applies gateway-wide either way.
+frontendPolicies:
+  accessLog:
+    database:
+      add:
+        prompt: "has(llm.prompt) ? string(llm.prompt) : ''"
+        completion: "has(llm.completion) ? string(llm.completion) : ''"
