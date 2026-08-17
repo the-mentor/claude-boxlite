@@ -494,30 +494,59 @@ def attach(box, cmd):
             stdout = native_exec.stdout()
             if stdout is None:
                 return
-            async for chunk in stdout:
-                out.write(chunk if isinstance(chunk, bytes) else chunk.encode())
-                out.flush()
+            try:
+                async for chunk in stdout:
+                    out.write(chunk if isinstance(chunk, bytes) else chunk.encode())
+                    out.flush()
+            except Exception:
+                pass  # EIO when PTY slave closes; treat as EOF
 
         async def pump_in():
+            import select as _select
             stdin = native_exec.stdin()
             if stdin is None:
                 return
             while True:
-                data = await loop.run_in_executor(None, os.read, fd, 1024)
+                # Short timeout so the executor thread never blocks indefinitely:
+                # cleans up on shutdown and lets us probe process liveness.
+                ready = await loop.run_in_executor(
+                    None, lambda: _select.select([fd], [], [], 0.3)[0]
+                )
+                if not ready:
+                    # No user input — probe whether the process is still alive.
+                    # NUL byte is ignored by bash/readline/vim; if send_input
+                    # raises, the process has exited.
+                    try:
+                        await stdin.send_input(b"\x00")
+                    except Exception:
+                        break
+                    continue
+                data = os.read(fd, 1024)
                 if not data:
                     break
-                await stdin.send_input(data)
+                try:
+                    await stdin.send_input(data)
+                except Exception:
+                    break  # process exited; stop pumping
 
         out_task = asyncio.create_task(pump_out())
         in_task = asyncio.create_task(pump_in())
+        # native_exec.wait() returns a PyO3 Future, not a coroutine, so
+        # create_task() rejects it. Wrap in a coroutine so we can include
+        # process exit in the wait group — PTY stdout may not signal EOF
+        # immediately after bash exits, leaving pump_out hanging otherwise.
+        async def wait_exit():
+            return await native_exec.wait()
+        exit_task = asyncio.create_task(wait_exit())
         try:
-            await asyncio.wait([out_task, in_task], return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait(
+                [out_task, in_task, exit_task], return_when=asyncio.FIRST_COMPLETED
+            )
         finally:
             signal.signal(signal.SIGWINCH, signal.SIG_DFL)
             out_task.cancel()
             in_task.cancel()
-
-        await native_exec.wait()
+            exit_task.cancel()
 
     try:
         # ponytail: ._sync_helper accesses an internal — SyncBox has no public
