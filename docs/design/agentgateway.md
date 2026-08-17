@@ -8,7 +8,7 @@ who did what or when, only what the config is and why it has to be that way.
 ## Shape
 
 agentgateway (`cr.agentgateway.dev/agentgateway`, pinned at `v1.4.1`) runs as a long-lived
-Docker Compose service on the host, alongside two sibling containers:
+Docker Compose service on the host, alongside three sibling containers:
 
 - **`mcp-gateway`** (port 15003) — serves `/mcp` and `/sse`, multiplexing MCP tool targets.
   One target is live (`github`, proxied to the sibling `github-mcp` container); three more
@@ -20,6 +20,9 @@ Docker Compose service on the host, alongside two sibling containers:
   behind HTTP basic auth.
 - **`github-mcp`** — GitHub's official MCP server image, run as a sibling compose service
   with no published host port, reachable only from `agentgateway` over the compose network.
+- **`bash-guard-mcp`** — the policy engine behind the box's opt-in `PreToolUse` Bash hook,
+  serving one MCP tool. Same shape as `github-mcp` (sibling service, no published port,
+  compose-network only); unlike it, it holds no credential. See `docs/design/bash-guard.md`.
 - **`jaeger`** (port 16686) — OTLP-gRPC trace backend for `config.tracing`; only its
   read-only trace-viewer UI is published, not the `4317` collection port `agentgateway`
   reaches it on over the compose network. See Telemetry below.
@@ -115,6 +118,7 @@ violated.
 | `hostOverride` takes `host:port` only — no scheme, no path. | A bare hostname with no port crash-loops the gateway; `hostOverride` replaces the authority, not the whole URL, and doesn't imply a scheme either (see `backendTLS` below). |
 | `htpasswd` must be a `{file: ...}` reference, never an inline hash string. | Apache-generated htpasswd hashes contain `$`-prefixed segments (one for `apr1`, one for `bcrypt`). An inline hash hits the same raw-text expansion rule above and crash-loops the gateway trying to resolve a segment as an environment variable. |
 | `basicAuth` needs `mode: strict`. | The schema's default mode is `optional`, which lets a request through with *no* credentials at all — silently defeating the point of putting auth in front of the admin UI. |
+| `mcp.prefixMode` must stay `never` now that there is more than one MCP target. | The default (`conditional`) prefixes tool names with their target name as soon as a second target exists, renaming every GitHub tool the box sees (`get_me` → `github_get_me`) with no error anywhere. That breaks the Bash guard's hook binding and any permission rule naming a tool. `never` requires tool names to be unique across targets — check for a collision before adding one. |
 
 ## Decisions worth recording
 
@@ -253,6 +257,15 @@ plainly. All checked against the schema pinned to the `v1.4.1` image tag
   Without it, agentgateway sends plain HTTP to the override host and a TLS-only upstream's
   own frontend (nginx, etc.) answers with a bare 400. This was a real failure caught live,
   not a theoretical gap.
+- **`mcpAuthorization`'s CEL context cannot see tool call arguments.** Rules are evaluated
+  against a `ResourceType` carrying only a `target` and a `name` (`mcp/rbac.rs` at the
+  `v1.4.1` tag), so `mcp.tool.name` and `jwt.*` are available and the call's arguments are
+  not. A rule can gate *which* tools the box may call, never *what it passes them* — the
+  reason the Bash guard's policy lives in its own MCP server rather than in this file. Two
+  related traps: the rules attach to the whole target set rather than per target (stated on
+  `LocalMcpTarget.policies`), and a request matching no `allow` is denied — so one `allow`
+  rule added for a single tool silently denies every GitHub tool too. See
+  `docs/design/bash-guard.md`.
 - `promptGuard` is available at route level (`routes[].policies.ai.promptGuard`), not only
   nested under `llm.models[]` — relevant if guardrails are ever added, since both LLM routes
   here use the explicit `routes:` form rather than the `llm:` shorthand.

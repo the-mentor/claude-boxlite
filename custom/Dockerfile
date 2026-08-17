@@ -26,6 +26,35 @@ RUN set -eu; IFS=,; \
     for m in $MARKETPLACES; do claude plugin marketplace add "$m"; done; \
     for p in $PLUGINS; do claude plugin install --scope user "$p"; done
 
+# PreToolUse Bash guard: every Bash command is checked against host-side
+# policy through the gateway's MCP endpoint before it runs. See
+# docs/design/bash-guard.md.
+#
+# Off by default because it depends on something `just up` does not start: the
+# host-side gateway. With no gateway running, the MCP server the hook names is
+# not connected, and Claude Code reports a (non-blocking) hook error on every
+# single Bash call. A box booted without `just gateway-up` should behave
+# exactly as it did before this existed. Turn it on at build time:
+#   just build --build-arg BASH_GUARD_HOOK=on
+# (docker warns that base/ does not consume the arg — harmless, the justfile
+# forwards build args to both layers.)
+#
+# Merged after the plugin install above, which rewrites this same file: last
+# writer wins, so this has to run second. `jq -s '.[0] * .[1]'` is a recursive
+# merge, so it adds `hooks` without disturbing statusLine or enabledPlugins.
+ARG BASH_GUARD_HOOK=off
+COPY bash-guard-hook.json /tmp/bash-guard-hook.json
+RUN set -eu; \
+    if [ "$BASH_GUARD_HOOK" = "on" ]; then \
+      jq -s '.[0] * .[1]' /root/.claude/settings.json /tmp/bash-guard-hook.json \
+        > /tmp/settings.merged.json; \
+      mv /tmp/settings.merged.json /root/.claude/settings.json; \
+      echo "bash-guard PreToolUse hook: enabled"; \
+    else \
+      echo "bash-guard PreToolUse hook: disabled (build with --build-arg BASH_GUARD_HOOK=on)"; \
+    fi; \
+    rm -f /tmp/bash-guard-hook.json
+
 # copy oh-my-posh statusline config
 COPY mojada-claude.omp.json /root/mojada-claude.omp.json
 

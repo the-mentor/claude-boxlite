@@ -23,6 +23,8 @@ just list               # list running boxes across every box name (see below), 
 just down               # stop and remove the box
 just gateway-up/down/logs # manage the host-side agentgateway
 just gateway-generate-ui-password # change the admin UI's default credentials, see below
+just guard-test         # check the Bash guard's policy rules (no gateway/box/docker needed)
+just guard-check        # ask the running gateway to rule on a command read from stdin
 just registry-up/down   # manage the local docker-compose registry directly
 just registry-login     # log in to an authenticated registry (e.g. ECR), see below
 just install/uninstall  # symlink the cb wrapper onto PATH (see below)
@@ -55,8 +57,10 @@ anywhere. `just` sets the working directory to the justfile's own directory when
 `local-development/registry/docker-compose.yml`) resolve correctly either way. `just
 uninstall` removes the symlink.
 
-There is no test suite or linter in this repo; verification is building the images and
-booting a box (`just up-dev`).
+There is no test suite or linter for the repo as a whole; verification is building the images
+and booting a box (`just up-dev`). The one exception is the Bash guard's policy engine, which
+is regex-heavy and easy to get subtly wrong: `just guard-test` checks it (and its MCP protocol
+handling) with nothing running — run it after any edit to `agentgateway/bash-guard/`.
 
 ## Running multiple boxes at once
 
@@ -86,6 +90,12 @@ Ctrl-C) the `up` session first.
   `host.boxlite.internal`) have real hazards if changed without care. Read
   `docs/design/agentgateway.md` before editing `agentgateway/config.yaml` or its
   `docker-compose.yml`.
+- **Bash guard.** An opt-in `PreToolUse` hook (built with `--build-arg BASH_GUARD_HOOK=on`)
+  sends every Bash command the box is about to run through the gateway's MCP endpoint to the
+  `bash-guard-mcp` service, which rules allow/ask/deny from `agentgateway/bash-guard/rules.json`.
+  It fails open by design and is a guardrail against accidents, not a security boundary. Read
+  `docs/design/bash-guard.md` before editing `agentgateway/bash-guard/`, the hook fragment in
+  `custom/bash-guard-hook.json`, or the `prefixMode`/`bash-guard` entries in `config.yaml`.
 
 ## Commit and PR titles
 

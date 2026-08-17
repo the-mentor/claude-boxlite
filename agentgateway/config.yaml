@@ -60,6 +60,15 @@ mcp:
   # Serves /mcp and /sse automatically on mcp-gateway (port 15003) — the box's
   # baked http://host.boxlite.internal:15003/mcp needs no change here.
   gateways: mcp-gateway
+  # Load-bearing, and not a style choice. The schema default (`conditional`)
+  # prefixes tool names with their target name as soon as there is more than
+  # one target — so adding the bash-guard target below would silently rename
+  # every GitHub tool the box already sees (get_me becomes github_get_me),
+  # breaking the box's PreToolUse hook binding and any permission rule naming
+  # a tool. `never` keeps every name exactly as its own server publishes it.
+  # The cost: names must stay unique across targets, since routing is by name
+  # lookup — check for a collision before adding a third target.
+  prefixMode: never
   targets:
     # GitHub's official MCP server (ghcr.io/github/github-mcp-server), run as
     # the `github-mcp` sibling compose service in HTTP mode (see
@@ -82,6 +91,21 @@ mcp:
         host: github-mcp
         port: 9090
         path: /
+
+    # Policy engine for the box's PreToolUse Bash hook (the `bash-guard-mcp`
+    # sibling compose service). The box's Claude Code calls its one tool,
+    # check_bash_command, before running any Bash command and treats the
+    # tool's reply as the hook's allow/ask/deny decision; the policy itself
+    # lives in bash-guard/rules.json. No credential to inject — unlike the
+    # github target above, this server authenticates nothing. Path is /mcp,
+    # which is where the server actually mounts (it also answers on /), so
+    # this does not depend on the root-mount caveat noted for github.
+    # See docs/design/bash-guard.md.
+    - name: bash-guard
+      mcp:
+        host: bash-guard-mcp
+        port: 9091
+        path: /mcp
 
     # --- Not enabled. These are stdio servers and this container has no
     # --- node/uv, so each needs a sibling compose service running its

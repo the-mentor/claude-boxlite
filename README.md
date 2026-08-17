@@ -166,7 +166,7 @@ to "the host only." That's why the admin API's port is not published by default 
 
 | Bind | Serves |
 |---|---|
-| `:15003/mcp` | multiplexed MCP tools (`github` live, proxied to a sibling `github-mcp` container — not GitHub's remote endpoint; others commented in `agentgateway/config.yaml`) |
+| `:15003/mcp` | multiplexed MCP tools (`github` live, proxied to a sibling `github-mcp` container — not GitHub's remote endpoint; `bash-guard` live, backing the Bash guard below; others commented in `agentgateway/config.yaml`) |
 | `:15002/claude` | Anthropic passthrough — your subscription OAuth token goes upstream untouched |
 | `:15002/api` | Anthropic-Messages-API keyed — the gateway attaches `ANTHROPIC_API_KEY`, which stays on the host; upstream defaults to `api.anthropic.com` but is configurable via `AGENTGATEWAY_ANTHROPIC_UPSTREAM_HOST` (e.g. for a LiteLLM key) |
 | `:15001/ui` | raw admin API (agentgateway's built-in admin interface) — **not published by default** (commented out in `agentgateway/docker-compose.yml`); its `/config_dump` is unauthenticated and returns real credential values, so publishing it hands every box a way to read `ANTHROPIC_API_KEY` back out. Uncomment the port temporarily for local debugging only while no untrusted box is running |
@@ -205,6 +205,55 @@ credential, not all of them:
 | 401 in subscription mode with the right path | `ANTHROPIC_AUTH_TOKEN` is set and shadowing the OAuth token — unset it |
 | 400 `Extra inputs are not permitted` | beta headers the backend rejects; set `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` and add it to `passthrough_vars` |
 | Box can't reach Anthropic at all | the gateway isn't running — `just gateway-up` |
+
+### The Bash guard
+
+Every Bash command the box's Claude Code is about to run can be checked against policy you
+keep on the host, before it runs. Claude Code fires a `PreToolUse` hook, the hook calls one
+MCP tool through the gateway it already talks to, and the answer decides what happens:
+
+| Verdict | Effect in the box |
+|---|---|
+| `deny` | the command doesn't run, and Claude is told why |
+| `ask` | you get a permission prompt |
+| `allow` | it runs with no prompt |
+| no match | nothing changes — Claude Code's normal permission flow decides |
+
+**It's off by default**, because it needs the gateway and `just up` doesn't start one. Turn it
+on when building the image, and start the gateway alongside it:
+
+```bash
+just build --build-arg BASH_GUARD_HOOK=on   # bakes the hook into the image
+just gateway-up                             # policy lives here, not in the box
+just up
+```
+
+Policy is `agentgateway/bash-guard/rules.json` — an ordered list of regexes, first match wins.
+It ships denying a handful of things nobody means to do (deleting `/`, `~`, or `/workspace`;
+formatting a device; a fork bomb), asking about outward-facing or irreversible ones (`git
+push`, `gh pr create`, `npm publish`, `sudo`, recursive deletes, piping a download into a
+shell, reading private keys), and staying out of the way otherwise. Edit and save it and the
+next command is judged by the new rules — no rebuild, no restart, because the file is mounted
+into the `bash-guard-mcp` container.
+
+Two ways to check your work:
+
+```bash
+just guard-test                    # the rules themselves — no gateway, box, or docker needed
+echo 'rm -rf /' | just guard-check # the whole path, through the running gateway
+```
+
+`just guard-check` reads the command from stdin on purpose: `just` pastes recipe arguments
+into a shell line as raw text, and the commands worth testing here are exactly the ones you
+don't want executing on your host if a quote slips. Decisions are logged with the command that
+caused them — `just gateway-logs`, lines tagged `[bash-guard]`.
+
+**What it isn't.** It fails open: if the gateway is down or the policy server errors, Claude
+Code logs a non-blocking hook error and runs the command. The box can also stop the gateway or
+edit its own settings, and any regex can be walked around by encoding a command. This is a
+guardrail against accidents and a place to see what a box is doing — not a security boundary.
+The boundaries are the microVM and the credential model above. Design in
+`docs/design/bash-guard.md`.
 
 ### Admin UI
 

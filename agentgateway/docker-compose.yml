@@ -69,6 +69,8 @@ services:
     depends_on:
       github-mcp:
         condition: service_started
+      bash-guard-mcp:
+        condition: service_started
       jaeger:
         condition: service_started
       agentgateway-logs-init:
@@ -100,6 +102,37 @@ services:
     # injected as a Bearer header) — see docs/design/agentgateway.md.
     # Deliberately no `ports:` — reached only over the compose network by
     # service name. Do NOT publish a host port.
+    restart: unless-stopped
+
+  # Policy engine behind the box's PreToolUse Bash hook: an MCP server holding
+  # one tool, reached only through agentgateway's `bash-guard` target (see
+  # config.yaml). Stock python image running a bind-mounted stdlib-only
+  # script, so there is no image to build and nothing to push — same "official
+  # image plus mounted config" shape as github-mcp above.
+  #
+  # The whole directory is mounted, not the individual files: editors
+  # that save by atomic rename replace the file's inode, which a single-file
+  # bind mount would never see — and the server's edit-and-reload behaviour
+  # for rules.json depends on seeing it. Read-only: policy is edited on the
+  # host and tracked in git, never from inside a container.
+  #
+  # Deliberately no `ports:` — the box reaches this only via agentgateway, so
+  # every call passes the gateway's MCP policies and lands in its request log.
+  # Publishing a host port here would hand every running box a way to query
+  # (and, with a writable mount, rewrite) its own guardrail. See
+  # docs/design/agentgateway.md on why loopback is not the boundary.
+  bash-guard-mcp:
+    image: python:3.13-slim
+    container_name: bash-guard-mcp
+    command: ["python3", "/opt/bash-guard/server.py"]
+    environment:
+      BASH_GUARD_PORT: "9091"
+      BASH_GUARD_RULES: /opt/bash-guard/rules.json
+      # Decisions are logged to stderr for `just gateway-logs`; unbuffered so
+      # a crashing traceback is not lost in the pipe buffer.
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./bash-guard:/opt/bash-guard:ro
     restart: unless-stopped
 
   # OTLP-gRPC trace backend for config.yaml's `config.tracing`. all-in-one
