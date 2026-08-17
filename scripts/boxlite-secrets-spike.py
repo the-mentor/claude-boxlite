@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.10"
-# dependencies = ["boxlite==0.9.7"]
+# requires-python = ">=3.10,<3.14"
+# dependencies = ["boxlite[sync]==0.9.7"]
 # ///
 """Validate BoxLite's host-side secret injection against this repo's custom image.
 
@@ -41,9 +41,12 @@ import sys
 from pathlib import Path
 
 try:
-    from boxlite import BoxOptions, Boxlite, ImageRegistry, Options, Secret
+    # SyncBoxlite, not Boxlite: the latter is the native async runtime, whose
+    # create()/exec() return coroutines. The sync wrapper needs the [sync] extra
+    # (greenlet) — without it the import below silently lacks SyncBoxlite.
+    from boxlite import BoxOptions, ImageRegistry, Options, Secret, SyncBoxlite
 except ImportError:  # deferred to main() so --help works without the dependency
-    BoxOptions = Boxlite = ImageRegistry = Options = Secret = None
+    BoxOptions = ImageRegistry = Options = Secret = SyncBoxlite = None
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -87,24 +90,13 @@ def load_registries(config_path):
 
 
 def drain(stream):
-    """Read an exec stream without assuming its concrete shape.
+    """Collect a SyncExecStdout/SyncExecStderr line iterator into one string.
 
-    box.exec() returns an Execution whose .stdout/.stderr were introspected but
-    not exercised on a live runtime, so tolerate bytes, str, a file-like, or an
-    iterator of chunks rather than guessing one and failing opaquely.
+    These are methods returning iterators of already-decoded, newline-stripped
+    lines (SyncExecution.stdout()/.stderr()), and they return None when the
+    stream is unavailable.
     """
-    if stream is None:
-        return ""
-    if isinstance(stream, (bytes, bytearray)):
-        return stream.decode("utf-8", "replace")
-    if isinstance(stream, str):
-        return stream
-    if hasattr(stream, "read"):
-        return drain(stream.read())
-    try:
-        return "".join(drain(chunk) for chunk in stream)
-    except TypeError:
-        return str(stream)
+    return "\n".join(line.rstrip("\n") for line in stream) if stream is not None else ""
 
 
 def run(box, script):
@@ -112,9 +104,12 @@ def run(box, script):
 
     exit_code is None when the runtime does not surface one — callers key off
     stdout instead, which every check below is written to make sufficient.
+
+    Both streams are drained before wait(): the iterators are fed by the live
+    execution, so waiting first can leave output unread.
     """
     execution = box.exec("sh", ["-lc", script])
-    out, err = drain(execution.stdout), drain(execution.stderr)
+    out, err = drain(execution.stdout()), drain(execution.stderr())
     code = None
     try:
         result = execution.wait()
@@ -145,8 +140,11 @@ def probe_http(box, label, url, header, note=""):
         f'echo " rc=$?"; cat /tmp/curl.err'
     )
     _, out, err = run(box, script)
-    status, _, rest = out.partition(" rc=")
-    rc = rest.strip().split()[0] if rest.strip() else "?"
+    # curl's %{http_code} and the echoed rc can land in separate stream lines, so
+    # collapse whitespace before splitting them apart.
+    status, _, rest = " ".join(out.split()).partition("rc=")
+    status = status.strip()
+    rc = rest.split()[0] if rest.strip() else "?"
 
     if rc in {str(k) for k in CURL_TLS_ERRORS}:
         return report(label, "FAIL", f"TLS error {rc} ({CURL_TLS_ERRORS[int(rc)]}) — guest does not trust the MITM CA")
@@ -197,76 +195,88 @@ def main():
     # Each secret is scoped to the hosts it may be substituted for. A host absent
     # from this list must never receive the real value; that scoping is the whole
     # security property, so keep these lists as narrow as the check requires.
-    secrets, env = [], {}
+    # BoxOptions.env takes a list of (key, value) tuples, not a dict.
+    secrets, env = [], []
     if gh_token:
         secrets.append(Secret(name="gh", value=gh_token, hosts=["github.com", "api.github.com"]))
-        env["GH_TOKEN"] = placeholder("gh")
+        env.append(("GH_TOKEN", placeholder("gh")))
     if anthropic_key:
         secrets.append(Secret(name="anthropic", value=anthropic_key, hosts=["api.anthropic.com"]))
-        env["ANTHROPIC_API_KEY"] = placeholder("anthropic")
+        env.append(("ANTHROPIC_API_KEY", placeholder("anthropic")))
+    env_names = {name for name, _ in env}
 
     print(f"boxlite-secrets-spike: booting {args.image} with {len(secrets)} secret(s)\n", flush=True)
 
-    runtime = Boxlite.init_default(
+    # init_default() only registers the options for the global runtime; it returns
+    # None. The runtime itself comes from default(), and its dispatcher fiber has
+    # to be running before create()/exec(), which is what the context manager does.
+    SyncBoxlite.init_default(
         Options(home_dir=args.home, image_registries=load_registries(args.config))
     )
-    box = None
-    try:
-        box = runtime.create(
-            BoxOptions(image=args.image, env=env, secrets=secrets, auto_remove=not args.keep),
-            name="boxlite-secrets-spike",
-        )
-        box.start()
-
-        # 1. Custody: whatever the guest can read must be the placeholder. This is
-        #    the check that would catch the feature silently degrading to plain
-        #    env-var passthrough, which would look identical from every probe below.
-        for var, name in (("GH_TOKEN", "gh"), ("ANTHROPIC_API_KEY", "anthropic")):
-            if var not in env:
-                continue
-            _, out, _ = run(box, f'printenv {var} || true')
-            real = gh_token if name == "gh" else anthropic_key
-            if out == placeholder(name):
-                report(f"custody/{var}", "PASS", "guest sees only the placeholder")
-            elif real and real in out:
-                report(f"custody/{var}", "FAIL", "REAL VALUE PRESENT IN GUEST — no custody gain")
-            else:
-                report(f"custody/{var}", "FAIL", f"unexpected value {out[:40]!r}")
-
-        # 2. Substitution, one header style per credential. Claude Code sends
-        #    x-api-key; gh and git send Authorization — both must work or the
-        #    feature only covers half this repo's traffic.
-        if gh_token:
-            probe_http(box, "github/authorization-header", "https://api.github.com/user",
-                       f"Authorization: Bearer {placeholder('gh')}")
-        if anthropic_key:
-            probe_http(box, "anthropic/x-api-key-header", "https://api.anthropic.com/v1/models",
-                       f"x-api-key: {placeholder('anthropic')}", note=" (no tokens billed)")
-
-        # 3. The real clients, not just curl. gh and git each build their own TLS
-        #    stack and their own header, so a curl PASS does not imply these pass.
-        if gh_token:
-            _, out, err = run(box, "gh api user --jq .login 2>&1 || true")
-            report("github/gh-cli", "PASS" if out and "error" not in out.lower() else "FAIL",
-                   out[:120] if out else err[:120] or "no output")
-
-            if args.git_remote:
-                _, out, err = run(box, f"git ls-remote {args.git_remote!r} HEAD 2>&1 | head -1 || true")
-                ok = out and "fatal" not in out.lower() and "denied" not in out.lower()
-                report("github/git-ls-remote", "PASS" if ok else "FAIL", (out or err)[:120])
-            else:
-                report("github/git-ls-remote", "SKIP", "pass --git-remote <private-https-url> to exercise")
-
-    finally:
-        if box is not None and not args.keep:
-            try:
-                runtime.remove(box.id, force=True)
-            except Exception as exc:  # noqa: BLE001 - cleanup failure must not mask results
-                print(f"\nboxlite-secrets-spike: cleanup failed ({exc}); remove the box by hand", file=sys.stderr)
+    with SyncBoxlite.default() as runtime:
+        box = None
         try:
-            runtime.close()
-        except Exception:  # noqa: BLE001
-            pass
+            box = runtime.create(
+                BoxOptions(
+                    image=args.image,
+                    env=env,
+                    secrets=secrets,
+                    auto_remove=not args.keep,
+                    # The image sets no ENTRYPOINT/CMD, so it inherits node:26's
+                    # `node`, which exits immediately without a TTY and takes the
+                    # box down with it. Every check here runs via exec, so the main
+                    # process just has to stay alive.
+                    cmd=["sleep", "infinity"],
+                ),
+                name="boxlite-secrets-spike",
+            )
+            box.start()
+
+            # 1. Custody: whatever the guest can read must be the placeholder. This is
+            #    the check that would catch the feature silently degrading to plain
+            #    env-var passthrough, which would look identical from every probe below.
+            for var, name in (("GH_TOKEN", "gh"), ("ANTHROPIC_API_KEY", "anthropic")):
+                if var not in env_names:
+                    continue
+                _, out, _ = run(box, f'printenv {var} || true')
+                real = gh_token if name == "gh" else anthropic_key
+                if out == placeholder(name):
+                    report(f"custody/{var}", "PASS", "guest sees only the placeholder")
+                elif real and real in out:
+                    report(f"custody/{var}", "FAIL", "REAL VALUE PRESENT IN GUEST — no custody gain")
+                else:
+                    report(f"custody/{var}", "FAIL", f"unexpected value {out[:40]!r}")
+
+            # 2. Substitution, one header style per credential. Claude Code sends
+            #    x-api-key; gh and git send Authorization — both must work or the
+            #    feature only covers half this repo's traffic.
+            if gh_token:
+                probe_http(box, "github/authorization-header", "https://api.github.com/user",
+                           f"Authorization: Bearer {placeholder('gh')}")
+            if anthropic_key:
+                probe_http(box, "anthropic/x-api-key-header", "https://api.anthropic.com/v1/models",
+                           f"x-api-key: {placeholder('anthropic')}", note=" (no tokens billed)")
+
+            # 3. The real clients, not just curl. gh and git each build their own TLS
+            #    stack and their own header, so a curl PASS does not imply these pass.
+            if gh_token:
+                _, out, err = run(box, "gh api user --jq .login 2>&1 || true")
+                report("github/gh-cli", "PASS" if out and "error" not in out.lower() else "FAIL",
+                       out[:120] if out else err[:120] or "no output")
+
+                if args.git_remote:
+                    _, out, err = run(box, f"git ls-remote {args.git_remote!r} HEAD 2>&1 | head -1 || true")
+                    ok = out and "fatal" not in out.lower() and "denied" not in out.lower()
+                    report("github/git-ls-remote", "PASS" if ok else "FAIL", (out or err)[:120])
+                else:
+                    report("github/git-ls-remote", "SKIP", "pass --git-remote <private-https-url> to exercise")
+
+        finally:
+            if box is not None and not args.keep:
+                try:
+                    runtime.remove(box.id, force=True)
+                except Exception as exc:  # noqa: BLE001 - cleanup failure must not mask results
+                    print(f"\nboxlite-secrets-spike: cleanup failed ({exc}); remove the box by hand", file=sys.stderr)
 
     failed = [label for label, verdict, _ in RESULTS if verdict == "FAIL"]
     print(f"\nboxlite-secrets-spike: {len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed", flush=True)
