@@ -1,0 +1,22 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "agentgateway",
+            "tool": "check_bash_command",
+            "timeout": 15,
+            "input": {
+              "command": "${tool_input.command}",
+              "cwd": "${cwd}",
+              "session_id": "${session_id}"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -156,6 +156,31 @@ gateway-down:
 gateway-logs:
     {{gateway}} logs -f
 
+# Ask the running gateway what it would decide about a Bash command — the
+# end-to-end check that the PreToolUse guard is wired up: it walks the same
+# path the box's hook walks (MCP on :15003 -> the bash-guard target -> the
+# policy server) and prints the decision Claude Code would act on. Needs
+# `just gateway-up` first. See docs/design/bash-guard.md.
+#
+# Reads the command from STDIN, and deliberately takes no recipe argument:
+# just substitutes arguments as raw text into the recipe's shell line, so a
+# command containing quotes could break out and run on the HOST — and the
+# commands worth testing here are precisely the dangerous ones. Piping keeps
+# the string as data. Quote it in your own shell:
+#
+#     echo 'rm -rf /' | just guard-check
+#
+# Ask the gateway for its verdict on a Bash command read from stdin.
+guard-check:
+    @python3 agentgateway/bash-guard/ask-gateway.py
+
+# Runs with no gateway, no box, no docker and no network — the only part of
+# this repo that can be verified without booting anything, and the fast way to
+# check an edit to agentgateway/bash-guard/rules.json.
+# Check the Bash guard's policy rules and MCP protocol handling on their own.
+guard-test:
+    @python3 agentgateway/bash-guard/test_server.py
+
 # Change the password for the admin UI (on by default at 127.0.0.1:15000, see
 # README.md "Admin UI"), overwriting agentgateway/htpasswd — the live,
 # gitignored file `just gateway-up` bootstraps from the tracked

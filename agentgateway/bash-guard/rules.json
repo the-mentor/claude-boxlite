@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "notes": [
+    "Policy the bash-guard MCP server applies to every Bash command the box's",
+    "Claude Code is about to run. First matching rule wins, so order matters:",
+    "specific denies come before the broader asks that would also match.",
+    "Patterns are Python regexes, searched (not anchored) against the raw",
+    "command string unless the pattern anchors itself. [^;&|]* is used instead",
+    "of .* so a pattern cannot span a shell separator and match fragments of",
+    "two unrelated commands in one chain.",
+    "Decisions: deny blocks and tells Claude why; ask prompts the user; allow",
+    "skips the permission prompt; undecided (the default) stays silent and",
+    "lets Claude Code's own permission flow decide. Edit and save this file to",
+    "change policy — the server reloads it on the next call, no restart.",
+    "These are heuristics against accidents, not a security boundary: anything",
+    "that can write to this file or encode a command past a regex is out of",
+    "scope. See docs/design/bash-guard.md."
+  ],
+  "default": {
+    "decision": "undecided"
+  },
+  "rules": [
+    {
+      "id": "rm-root-target",
+      "decision": "deny",
+      "pattern": "\\brm\\b[^;&|]*\\s['\"]?(/|/\\*|~|~/|~/\\*|\\$HOME|\\$HOME/\\*|/workspace|/workspace/\\*)['\"]?\\s*(;|&|\\||$)",
+      "reason": "Refusing to delete a filesystem root, the home directory, or the whole /workspace mount. Delete a specific subdirectory instead."
+    },
+    {
+      "id": "disk-destruction",
+      "decision": "deny",
+      "pattern": "\\b(mkfs(\\.[a-z0-9]+)?|fdisk|parted)\\b|\\bdd\\b[^;&|]*\\bof=/dev/|>\\s*/dev/(sd|nvme|vd|hd)",
+      "reason": "Refusing to format or raw-write a block device from inside the box."
+    },
+    {
+      "id": "fork-bomb",
+      "decision": "deny",
+      "pattern": ":\\s*\\(\\s*\\)\\s*\\{[^}]*\\|[^}]*&[^}]*\\}\\s*;\\s*:",
+      "reason": "Refusing to run a fork bomb."
+    },
+    {
+      "id": "secret-read",
+      "decision": "ask",
+      "pattern": "\\b(cat|bat|less|more|head|tail|xxd|base64|strings|cp|scp|curl|nc)\\b[^;&|]*(\\.ssh/id_(?!.*\\.pub)|\\.aws/credentials|\\.config/gcloud|\\.docker/config\\.json|\\.netrc|\\.claude\\.json|\\.config/gh/hosts\\.yml)",
+      "reason": "This reads a private key or stored credential. Confirm you want its contents in the transcript."
+    },
+    {
+      "id": "pipe-to-shell",
+      "decision": "ask",
+      "pattern": "\\b(curl|wget)\\b[^|]*\\|\\s*(sudo\\s+)?(ba|z|k|da)?sh\\b",
+      "reason": "This pipes a downloaded script straight into a shell. Confirm the source is one you trust."
+    },
+    {
+      "id": "privilege-escalation",
+      "decision": "ask",
+      "pattern": "(^|[;&|]\\s*)sudo\\b",
+      "reason": "This runs as root inside the box."
+    },
+    {
+      "id": "system-power",
+      "decision": "ask",
+      "pattern": "\\b(shutdown|reboot|halt|poweroff|systemctl\\s+(poweroff|reboot|halt))\\b",
+      "reason": "This powers off or reboots the box, ending the session."
+    },
+    {
+      "id": "rm-recursive",
+      "decision": "ask",
+      "pattern": "\\brm\\b[^;&|]*(\\s-[a-zA-Z]*[rR]|\\s--recursive)",
+      "reason": "This deletes a directory tree. Check the path before confirming."
+    },
+    {
+      "id": "git-force-push",
+      "decision": "ask",
+      "pattern": "\\bgit\\s+push\\b[^;&|]*(--force\\b|--force-with-lease\\b|\\s-f\\b)",
+      "reason": "This rewrites history on the remote."
+    },
+    {
+      "id": "git-push",
+      "decision": "ask",
+      "pattern": "\\bgit\\s+push\\b",
+      "reason": "This publishes commits to a remote."
+    },
+    {
+      "id": "gh-write",
+      "decision": "ask",
+      "pattern": "\\bgh\\s+(pr\\s+(create|merge|close)|repo\\s+(create|delete)|release\\s+create)\\b",
+      "reason": "This changes state on GitHub, visible to other people."
+    },
+    {
+      "id": "package-publish",
+      "decision": "ask",
+      "pattern": "\\b(npm|yarn|pnpm)\\s+publish\\b|\\bcargo\\s+publish\\b|\\btwine\\s+upload\\b|\\bdocker\\s+push\\b",
+      "reason": "This publishes a package or image to a public registry, which is hard to undo."
+    },
+    {
+      "id": "read-only-basics",
+      "decision": "allow",
+      "pattern": "^\\s*(git\\s+(status|diff|branch)|ls(\\s+-[a-zA-Z]+)?|pwd|whoami|date|uname(\\s+-[a-zA-Z]+)?)\\s*$",
+      "reason": "Read-only command with no arguments that could redirect it."
+    }
+  ]
+}
