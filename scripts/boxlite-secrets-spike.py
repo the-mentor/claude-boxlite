@@ -6,13 +6,10 @@
 """Validate BoxLite's host-side secret injection against this repo's custom image.
 
 BoxLite's `Secret` substitutes a real credential into outbound HTTPS requests at
-the host boundary, so the value never enters the guest. That would let the box
-run `gh`/`git push` and reach the Anthropic API without ever holding a token —
-retiring the GH_TOKEN passthrough documented in docs/design/general.md and the
-gateway's role as the credential boundary (docs/design/agentgateway.md).
+the host boundary, so the value never enters the guest. This script tests whether
+that is viable for replacing the GH_TOKEN passthrough in docs/design/general.md.
 
-This script answers the three questions that decide whether that is viable,
-before any SDK port is attempted:
+Questions this spike answers:
 
   1. Does substitution actually happen?    (a placeholder-only box authenticates)
   2. Does the guest need BoxLite's CA?     (TLS failures vs. clean 200s)
@@ -24,6 +21,34 @@ Run it from the repo root with whichever credentials you want to exercise:
 
 Checks whose credential is unset are skipped, not failed. Nothing here writes to
 the repo, and the box is removed on exit unless --keep is passed.
+
+== Findings (boxlite 0.9.7, 2026-08-17) ==
+
+Anthropic: BoxLite secret substitution is NOT the production auth path for
+Anthropic. The agentgateway's /api route (ANTHROPIC_BASE_URL=
+http://host.boxlite.internal:15002/api) injects the real key via backendAuth
+(agentgateway/config.yaml). The gateway has no incoming auth check — it accepts
+any x-api-key value and rewrites before forwarding. The box sends any dummy value;
+the gateway rewrites it. The `anthropic/gateway-reachable` check confirms the
+gateway is up and holds a valid key, not BoxLite substitution. Verified working
+in the interactive session (Claude Code responded successfully).
+
+GitHub: BoxLite secret substitution for GH_TOKEN could not be confirmed via HTTPS
+(api.github.com returned 503 during a GitHub infrastructure outage). A separate
+HTTP capture-server test (plain HTTP to host.boxlite.internal:19999) confirmed
+that BoxLite does NOT substitute in plain HTTP — the placeholder arrived
+unmodified. Substitution appears to be HTTPS-only (TLS MITM). Retest the HTTPS
+path once GitHub recovers to determine whether HTTPS substitution works.
+Custody check passed: the guest sees only the placeholder.
+
+Interactive attach: The sync wrapper's _sync() uses greenlet fiber switching that
+only works from the thread that created the dispatcher fiber — iterating stdout in
+a background thread raises RuntimeError. Fixed by running the interactive session
+as an async coroutine via box._sync_helper._sync(session()), using box._box (the
+native async API) directly. Verified: TUI renders correctly (raw byte chunks, not
+line-oriented); Claude reached the API through the gateway.
+
+== Running interactively ==
 
 With --interactive the automated checks run first and then the terminal is handed
 to the box, so the parts no scripted probe covers can be driven by hand — Claude
@@ -39,13 +64,6 @@ the runtime that created the box with `secrets=`. Handing the terminal to
 configured from --config, which carries only `image_registries`. The CLI cannot
 express secrets in a runtime at all, so the session would send the literal
 placeholder and collect a 401.
-
-That attach is written against three shapes this repo has not observed (whether
-`stdout()` under tty=True yields raw chunks or newline-stripped lines, whether
-`stdin` is an attribute or a method, and `resize_tty`'s argument order). boxlite
-ships macOS-arm64 wheels only, so they cannot be introspected from a Linux
-checkout. Run --probe-api on a host where the package installs to replace the
-guesses with facts; --self-check covers only the logic that needs no box.
 
 Dependencies are declared inline (PEP 723) and resolved by `uv run`, which the
 shebang invokes — there is no environment to create and nothing to install. The
@@ -253,6 +271,11 @@ def main():
     if anthropic_key:
         secrets.append(Secret(name="anthropic", value=anthropic_key, hosts=["api.anthropic.com"]))
         env.append(("ANTHROPIC_API_KEY", placeholder("anthropic")))
+    # Always route Claude through the agentgateway — the gateway injects the
+    # real key via backendAuth (agentgateway/config.yaml /api route), so the
+    # box never needs the real value. BoxLite secret substitution for
+    # api.anthropic.com is not the intended production path for Anthropic auth.
+    env.append(("ANTHROPIC_BASE_URL", "http://host.boxlite.internal:15002/api"))
     env_names = {name for name, _ in env}
 
     print(f"boxlite-secrets-spike: booting {args.image} with {len(secrets)} secret(s)\n", flush=True)
@@ -277,6 +300,7 @@ def main():
                     # box down with it. Every check here runs via exec, so the main
                     # process just has to stay alive.
                     cmd=["sleep", "infinity"],
+                    working_dir="/workspace",
                 ),
                 name="boxlite-secrets-spike",
             )
@@ -297,15 +321,28 @@ def main():
                 else:
                     report(f"custody/{var}", "FAIL", f"unexpected value {out[:40]!r}")
 
-            # 2. Substitution, one header style per credential. Claude Code sends
-            #    x-api-key; gh and git send Authorization — both must work or the
-            #    feature only covers half this repo's traffic.
+            # 2. Substitution for GitHub (Authorization header); gateway reachability
+            #    for Anthropic (the gateway injects the real key, box sends a dummy).
             if gh_token:
                 probe_http(box, "github/authorization-header", "https://api.github.com/user",
                            f"Authorization: Bearer {placeholder('gh')}")
             if anthropic_key:
-                probe_http(box, "anthropic/x-api-key-header", "https://api.anthropic.com/v1/models",
-                           f"x-api-key: {placeholder('anthropic')}", note=" (no tokens billed)")
+                # The gateway's /api route has no incoming auth check — it accepts any
+                # x-api-key value and rewrites it via backendAuth before forwarding.
+                # This check confirms the gateway is up and holds a valid key; it says
+                # nothing about BoxLite substitution (which is not the Anthropic path).
+                _, out, _ = run(box, (
+                    "curl -sS -o /dev/null -w '%{http_code}'"
+                    " http://host.boxlite.internal:15002/api/v1/models"
+                    " -H 'x-api-key: dummy' 2>/dev/null || true"
+                ))
+                status = out.strip().split()[0] if out.strip() else ""
+                report(
+                    "anthropic/gateway-reachable",
+                    "PASS" if status.startswith("2") else "FAIL",
+                    f"HTTP {status} — gateway up, key injected by gateway" if status.startswith("2")
+                    else f"HTTP {status or '?'} — gateway down or missing ANTHROPIC_API_KEY",
+                )
 
             # 3. The real clients, not just curl. gh and git each build their own TLS
             #    stack and their own header, so a curl PASS does not imply these pass.
@@ -400,13 +437,20 @@ def attach(box, cmd):
     CLI cannot express secrets in a runtime at all. Handing the terminal to it would
     send the literal placeholder and collect a 401.
 
-    Unverified: see probe_api(). If the TUI renders as garbled full lines, then
-    stdout() is line-oriented even under tty=True and the port needs the async API.
-    That outcome is a finding, not a bug in this function.
+    The sync wrapper's _sync() uses greenlet fiber switching that only works from
+    the OS thread (and greenlet) that created the dispatcher fiber. A background
+    thread cannot switch to the dispatcher's greenlet, so all boxlite calls must
+    stay in the main thread. For interactive I/O this means using the native async
+    API (box._box) directly, scheduled on the existing event loop via _sync_helper.
+
+    Verified shapes (from --probe-api):
+      stdin()           -> SyncExecStdin  -> native: send_input(data: bytes)
+      stdout()          -> SyncExecStdout -> native: async iterable of str/bytes
+      resize_tty(r, c)  -> awaitable
     """
+    import asyncio
     import signal
     import termios
-    import threading
     import tty as ttylib
 
     if not sys.stdin.isatty():
@@ -418,52 +462,70 @@ def attach(box, cmd):
         "  - claude reaches the API              -> Node trusts the MITM CA; no NODE_EXTRA_CA_CERTS needed\n"
         "  - claude fails on certificates        -> base/Dockerfile must install the CA and point Node at it\n"
         "  - `git push` to a private HTTPS remote -> the gh-credential-helper path substitutes too\n"
-        "  - the TUI is garbled                  -> the sync stream is line-oriented; the port needs the async API\n"
+        "  - the TUI is garbled                  -> stdout() is line-oriented; encoding needs adjustment\n"
         "Exit the shell/agent to return here; the box is then removed as usual.\n",
         flush=True,
     )
-
-    execution = box.exec(
-        cmd[0], cmd[1:], tty=True, env=[("TERM", os.environ.get("TERM") or "xterm-256color")]
-    )
-
-    def resize(*_):
-        size = os.get_terminal_size()
-        execution.resize_tty(size.lines, size.columns)
 
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     out = sys.stdout.buffer
 
-    def pump():
-        stream = execution.stdout()
-        for chunk in stream or ():
-            out.write(chunk if isinstance(chunk, bytes) else chunk.encode())
-            out.flush()
+    async def session():
+        loop = asyncio.get_running_loop()
+        native_exec = await box._box.exec(
+            cmd[0],
+            cmd[1:] or [],
+            tty=True,
+            env=[("TERM", os.environ.get("TERM") or "xterm-256color")],
+        )
+
+        size = os.get_terminal_size()
+        await native_exec.resize_tty(size.lines, size.columns)
+
+        def on_resize(*_):
+            s = os.get_terminal_size()
+            asyncio.run_coroutine_threadsafe(native_exec.resize_tty(s.lines, s.columns), loop)
+
+        signal.signal(signal.SIGWINCH, on_resize)
+        ttylib.setraw(fd)
+
+        async def pump_out():
+            stdout = native_exec.stdout()
+            if stdout is None:
+                return
+            async for chunk in stdout:
+                out.write(chunk if isinstance(chunk, bytes) else chunk.encode())
+                out.flush()
+
+        async def pump_in():
+            stdin = native_exec.stdin()
+            if stdin is None:
+                return
+            while True:
+                data = await loop.run_in_executor(None, os.read, fd, 1024)
+                if not data:
+                    break
+                await stdin.send_input(data)
+
+        out_task = asyncio.create_task(pump_out())
+        in_task = asyncio.create_task(pump_in())
+        try:
+            await asyncio.wait([out_task, in_task], return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            signal.signal(signal.SIGWINCH, signal.SIG_DFL)
+            out_task.cancel()
+            in_task.cancel()
+
+        await native_exec.wait()
 
     try:
-        resize()
-        signal.signal(signal.SIGWINCH, resize)
-        ttylib.setraw(fd)
-        threading.Thread(target=pump, daemon=True).start()
-        # stdin may be an attribute or a method, and may want bytes or str; one
-        # probe_api() run replaces this with whichever it is.
-        writer = execution.stdin() if callable(execution.stdin) else execution.stdin
-        while True:
-            data = os.read(fd, 1024)
-            if not data:
-                break
-            try:
-                writer.write(data)
-            except TypeError:
-                writer.write(data.decode("utf-8", "replace"))
-        execution.wait()
+        # ponytail: ._sync_helper accesses an internal — SyncBox has no public
+        # "run this coroutine on the dispatcher loop" method.
+        box._sync_helper._sync(session())
     except Exception as exc:  # noqa: BLE001 - a shape mismatch is the finding
-        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         print(
-            f"\nboxlite-secrets-spike: interactive attach failed: {exc!r}\n"
-            "Run --probe-api on this host and paste the output; the attach is written\n"
-            "against unverified shapes for stdin/stdout/resize_tty.",
+            f"\nboxlite-secrets-spike: interactive attach failed: {exc!r}",
             file=sys.stderr,
         )
     finally:
