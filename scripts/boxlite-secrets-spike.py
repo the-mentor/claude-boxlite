@@ -25,6 +25,28 @@ Run it from the repo root with whichever credentials you want to exercise:
 Checks whose credential is unset are skipped, not failed. Nothing here writes to
 the repo, and the box is removed on exit unless --keep is passed.
 
+With --interactive the automated checks run first and then the terminal is handed
+to the box, so the parts no scripted probe covers can be driven by hand — Claude
+Code's own Node TLS stack, the interactive TUI, `git push`:
+
+    ANTHROPIC_API_KEY=sk-ant-... scripts/boxlite-secrets-spike.py --interactive
+    scripts/boxlite-secrets-spike.py --interactive -- bash
+
+The session runs inside this process, on a `box.exec(..., tty=True)`, because that
+is the only place it can run: the substituting proxy is host-side and belongs to
+the runtime that created the box with `secrets=`. Handing the terminal to
+`boxlite exec` would not work — it opens its own runtime, and a CLI runtime is
+configured from --config, which carries only `image_registries`. The CLI cannot
+express secrets in a runtime at all, so the session would send the literal
+placeholder and collect a 401.
+
+That attach is written against three shapes this repo has not observed (whether
+`stdout()` under tty=True yields raw chunks or newline-stripped lines, whether
+`stdin` is an attribute or a method, and `resize_tty`'s argument order). boxlite
+ships macOS-arm64 wheels only, so they cannot be introspected from a Linux
+checkout. Run --probe-api on a host where the package installs to replace the
+guesses with facts; --self-check covers only the logic that needs no box.
+
 Dependencies are declared inline (PEP 723) and resolved by `uv run`, which the
 shebang invokes — there is no environment to create and nothing to install. The
 boxlite pin matches the CLI version this repo's claims were verified against, so
@@ -165,7 +187,7 @@ def report(label, verdict, detail):
     return verdict == "PASS"
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -178,7 +200,32 @@ def main():
     )
     parser.add_argument("--git-remote", help="optional private HTTPS repo URL to exercise `git ls-remote`")
     parser.add_argument("--keep", action="store_true", help="leave the box running for manual poking")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="after the checks, attach this terminal to the box and drive it by hand",
+    )
+    parser.add_argument(
+        "cmd",
+        nargs="*",
+        help="with --interactive, what to run in the box (default: claude); prefix with --",
+    )
+    parser.add_argument(
+        "--self-check", action="store_true", help="assert the offline logic and exit; boots nothing"
+    )
+    parser.add_argument(
+        "--probe-api",
+        action="store_true",
+        help="dump the SDK's real exec/TTY signatures and exit; boots nothing",
+    )
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
+
+    if args.self_check:
+        return self_check()
 
     if Secret is None:
         sys.exit(
@@ -186,6 +233,9 @@ def main():
             "(./scripts/boxlite-secrets-spike.py) so uv resolves the inline dependency, "
             "or `uv run scripts/boxlite-secrets-spike.py`."
         )
+
+    if args.probe_api:
+        return probe_api()
 
     gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -271,6 +321,12 @@ def main():
                 else:
                     report("github/git-ls-remote", "SKIP", "pass --git-remote <private-https-url> to exercise")
 
+            summarise()
+            if args.interactive:
+                # Inside the runtime block on purpose: the substituting proxy belongs
+                # to this runtime, so the session has to live here too.
+                attach(box, args.cmd or ["claude"])
+
         finally:
             if box is not None and not args.keep:
                 try:
@@ -278,11 +334,140 @@ def main():
                 except Exception as exc:  # noqa: BLE001 - cleanup failure must not mask results
                     print(f"\nboxlite-secrets-spike: cleanup failed ({exc}); remove the box by hand", file=sys.stderr)
 
+    return 1 if [v for _, v, _ in RESULTS if v == "FAIL"] else 0
+
+
+def summarise():
     failed = [label for label, verdict, _ in RESULTS if verdict == "FAIL"]
     print(f"\nboxlite-secrets-spike: {len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed", flush=True)
     if failed:
         print("failing: " + ", ".join(failed), file=sys.stderr)
-    return 1 if failed else 0
+
+
+def self_check():
+    """Offline assertions for the logic that needs no box. Boots nothing.
+
+    The interactive path itself cannot be checked here — it needs KVM, the built
+    image, and real credentials — so this covers the argument plumbing around it.
+    """
+    parser = build_parser()
+    args = parser.parse_args(["--interactive", "--", "claude", "--continue"])
+    assert args.interactive and args.cmd == ["claude", "--continue"], args
+    assert (parser.parse_args(["--interactive"]).cmd or ["claude"]) == ["claude"]
+    assert parser.parse_args([]).interactive is False
+
+    # The status/rc split, against every stream shape the live run produced.
+    for out, want_status, want_rc in (("200 rc=0", "200", "0"), ("200\n rc=0", "200", "0"), ("\nrc=60", "", "60")):
+        status, _, rest = " ".join(out.split()).partition("rc=")
+        assert status.strip() == want_status and rest.split()[0] == want_rc, out
+
+    assert drain(None) == "" and drain(["a", "b\n"]) == "a\nb"
+    print("boxlite-secrets-spike: self-check OK")
+    return 0
+
+
+def probe_api():
+    """Print the real signatures of the interactive surface, then exit.
+
+    The interactive attach below is written against three shapes this repo has not
+    observed: whether `stdout()` under tty=True yields raw chunks or the same
+    newline-stripped lines the non-TTY path gives, whether `stdin` is an attribute
+    or a method, and what argument order `resize_tty` takes. boxlite ships
+    macOS-arm64 wheels only, so none of it is introspectable from a Linux checkout.
+    Run this on a host where the package installs and the guesses become facts.
+    """
+    import inspect
+
+    for name in ("SyncBox", "SyncExecution", "Execution", "BoxOptions"):
+        obj = getattr(__import__("boxlite"), name, None)
+        print(f"\n=== {name}: {obj!r}")
+        for member in [m for m in dir(obj or ()) if not m.startswith("_")]:
+            try:
+                sig = str(inspect.signature(getattr(obj, member)))
+            except (TypeError, ValueError):
+                sig = "  (not callable)"
+            print(f"    {member}{sig}")
+    return 0
+
+
+def attach(box, cmd):
+    """Attach the local terminal to a TTY exec inside the box, in this process.
+
+    In-process is not a preference, it is the only thing that can work. The
+    substituting proxy is host-side and belongs to the runtime that created the box
+    with `secrets=`. `boxlite exec` opens its own runtime, and a CLI runtime is
+    configured from --config, whose struct carries only `image_registries` — so the
+    CLI cannot express secrets in a runtime at all. Handing the terminal to it would
+    send the literal placeholder and collect a 401.
+
+    Unverified: see probe_api(). If the TUI renders as garbled full lines, then
+    stdout() is line-oriented even under tty=True and the port needs the async API.
+    That outcome is a finding, not a bug in this function.
+    """
+    import signal
+    import termios
+    import threading
+    import tty as ttylib
+
+    if not sys.stdin.isatty():
+        sys.exit("boxlite-secrets-spike: --interactive needs a TTY on stdin")
+
+    print(
+        "\nboxlite-secrets-spike: attaching. What this is here to settle:\n"
+        "  - `gh api user` works                 -> substitution reaches an exec'd process, not just the box's main one\n"
+        "  - claude reaches the API              -> Node trusts the MITM CA; no NODE_EXTRA_CA_CERTS needed\n"
+        "  - claude fails on certificates        -> base/Dockerfile must install the CA and point Node at it\n"
+        "  - `git push` to a private HTTPS remote -> the gh-credential-helper path substitutes too\n"
+        "  - the TUI is garbled                  -> the sync stream is line-oriented; the port needs the async API\n"
+        "Exit the shell/agent to return here; the box is then removed as usual.\n",
+        flush=True,
+    )
+
+    execution = box.exec(
+        cmd[0], cmd[1:], tty=True, env=[("TERM", os.environ.get("TERM") or "xterm-256color")]
+    )
+
+    def resize(*_):
+        size = os.get_terminal_size()
+        execution.resize_tty(size.lines, size.columns)
+
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    out = sys.stdout.buffer
+
+    def pump():
+        stream = execution.stdout()
+        for chunk in stream or ():
+            out.write(chunk if isinstance(chunk, bytes) else chunk.encode())
+            out.flush()
+
+    try:
+        resize()
+        signal.signal(signal.SIGWINCH, resize)
+        ttylib.setraw(fd)
+        threading.Thread(target=pump, daemon=True).start()
+        # stdin may be an attribute or a method, and may want bytes or str; one
+        # probe_api() run replaces this with whichever it is.
+        writer = execution.stdin() if callable(execution.stdin) else execution.stdin
+        while True:
+            data = os.read(fd, 1024)
+            if not data:
+                break
+            try:
+                writer.write(data)
+            except TypeError:
+                writer.write(data.decode("utf-8", "replace"))
+        execution.wait()
+    except Exception as exc:  # noqa: BLE001 - a shape mismatch is the finding
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        print(
+            f"\nboxlite-secrets-spike: interactive attach failed: {exc!r}\n"
+            "Run --probe-api on this host and paste the output; the attach is written\n"
+            "against unverified shapes for stdin/stdout/resize_tty.",
+            file=sys.stderr,
+        )
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
 
 if __name__ == "__main__":
