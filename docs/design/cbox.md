@@ -162,9 +162,21 @@ box "stops when the runtime that created it is dropped." Under that default, exi
 would destroy the box — a regression against today's behavior, where `just down` exists
 precisely because the box outlives `just up`.
 
-cbox therefore sets **`detach: true`**. `auto_remove: true` is then correct and harmless: with
-`detach: true` a dropped runtime no longer stops the box, so removal happens only on an
-explicit `cbox down`, which is exactly today's `stop` + `rm`.
+cbox therefore sets **`detach: true`** and **`auto_remove: false`**.
+
+**Verified, and a correction.** An earlier draft of this document claimed `auto_remove: true`
+was "correct and harmless" alongside `detach: true`, reasoning that a dropped runtime no longer
+stops the box so removal would only happen on an explicit `cbox down`. That was read from field
+documentation and never exercised. The SDK rejects the combination outright — `BoxOptions::
+sanitize()` at `boxlite-0.9.7/src/runtime/options.rs:516` returns a config error: "auto_remove=
+true is incompatible with detach=true. Detached boxes should use auto_remove=false for manual
+lifecycle control." With the pairing the original text prescribed, *every* `cbox up` fails at
+creation.
+
+`auto_remove: false` is what the SDK prescribes and it preserves the intended behavior anyway:
+the box is kept after stop, and `cbox down` removes it explicitly, which is exactly today's
+`stop` + `rm`. The lesson worth keeping is the one the tagging convention exists for — a
+**read from source** claim is not a verified one, and this is the item that proved it.
 
 The consequence to accept: a crashed or SIGKILL'd `cbox up` leaves a box running with no
 owner. That is already true today, and `cbox list -a` plus `cbox down` remain the recovery.
