@@ -8,11 +8,17 @@ Claims are tagged **verified** (measured against `boxlite 0.9.7`, the CLI, or a 
 **read from source** (asserted by the crate's own code but not exercised), or **open**. The
 split is load-bearing: two of the open items can still change the design.
 
-**Unmerged dependencies.** `scripts/boxlite-secrets-spike.py` and
-`scripts/boxlite-secrets-spike-rs` are cited throughout but are not on `main` — they live on
-`claude/sdk-language-mitm-secrets-k9o5m4`. That branch should land before this design does, or
-the evidence behind every **verified** tag below is unreadable. `docs/design/boxlite-sdk.md`
-was copied across from that branch alongside this document.
+**Where the evidence lives.** Every **verified** claim below states its measurement inline, so
+this document stands on its own and does not need to be read alongside anything else. The
+spikes it credits — `scripts/boxlite-secrets-spike.py` and `scripts/boxlite-secrets-spike-rs`
+— are provenance for those measurements and live on
+`claude/sdk-language-mitm-secrets-k9o5m4`; neither branch needs to land before the other.
+`docs/design/boxlite-sdk.md` was copied across from there because it is the direct predecessor
+and is referenced as an argument rather than as a citation.
+
+The one place that ordering matters is implementation, not review: `attach.rs` is described
+below as lifted from the Rust spike, and that code is on the other branch. Either it has
+landed by then or the implementation cherry-picks that single file.
 
 Predecessor: `docs/design/boxlite-sdk.md` evaluated driving BoxLite through its SDK and ended
 by parking the language choice — "pick a language and port the `run`/`exec` paths, keeping
