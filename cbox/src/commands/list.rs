@@ -54,7 +54,22 @@ pub async fn run(all: bool) -> Result<()> {
                     print_header();
                     header_printed = true;
                 }
-                println!("{} (in use)", cell(&name, NAME_W));
+                // A locked home can't be opened to read its status/sidecar,
+                // so there's nothing but the name to show -- but it still
+                // has to line up under the six-column header, not just the
+                // NAME cell, or a listing that mixes this with full rows
+                // reads as broken. Reuse `format_row` so it's the same
+                // layout, not a second hand-rolled one.
+                let row = Row {
+                    name: name.clone(),
+                    id: String::new(),
+                    status: "(in use)".into(),
+                    image: String::new(),
+                    created: String::new(),
+                    origin: String::new(),
+                    marker: String::new(),
+                };
+                println!("{}", format_row(&row));
                 found = true;
                 continue;
             }
@@ -193,6 +208,17 @@ mod tests {
     }
 
     #[test]
+    fn truncate_is_safe_on_multi_byte_characters() {
+        // `.chars()` makes this immune to the UTF-8 boundary panic that byte
+        // slicing (`&s[..n]`) would risk here -- "café-résumé" has
+        // multi-byte characters that don't fall on convenient byte
+        // boundaries, and ORIGIN carries arbitrary filesystem paths.
+        let out = truncate("café-résumé", 5);
+        assert_eq!(out, "café…");
+        assert_eq!(out.chars().count(), 5);
+    }
+
+    #[test]
     fn cell_pads_short_values_to_the_column_width() {
         assert_eq!(cell("hi", 5), "hi   ");
     }
@@ -235,5 +261,34 @@ mod tests {
         // The empty origin cell is still full-width padding, not "N/A" or
         // similar — nothing but spaces where the path would be.
         assert!(rendered.contains(&" ".repeat(ORIGIN_W)));
+    }
+
+    #[test]
+    fn in_use_row_still_lines_up_under_the_header() {
+        // A locked home can only show a name and "(in use)" -- but it must
+        // occupy the same six cells as every other row, not a short
+        // two-column line, or a listing that mixes both looks broken.
+        let row = Row {
+            name: "locked-box".into(),
+            id: String::new(),
+            status: "(in use)".into(),
+            image: String::new(),
+            created: String::new(),
+            origin: String::new(),
+            marker: String::new(),
+        };
+        let rendered = format_row(&row);
+        let header = format_row(&Row {
+            name: "NAME".into(),
+            id: "ID".into(),
+            status: "STATUS".into(),
+            image: "IMAGE".into(),
+            created: "CREATED".into(),
+            origin: "ORIGIN".into(),
+            marker: String::new(),
+        });
+        assert_eq!(rendered.len(), header.len(), "in-use row must be the same width as the header");
+        assert!(rendered.contains("locked-box"));
+        assert!(rendered.contains("(in use)"));
     }
 }

@@ -29,6 +29,13 @@ pub fn write(home: &Path, origin: &Path) -> Result<()> {
     let sidecar = Sidecar { origin: origin.to_string_lossy().into_owned() };
     let body = serde_json::to_string_pretty(&sidecar).context("failed to encode box metadata")?;
     let path = home.join(FILE_NAME);
+    // Box homes are reused across `--force` recreates under the same derived
+    // name. Unlink any previous occupant's sidecar *before* writing the new
+    // one, so that if the write below fails partway, `list` renders this
+    // box's origin as blank rather than silently showing the *previous*
+    // occupant's origin against the new box. A missing file is not an error
+    // here — there's nothing to remove on a box's first write.
+    let _ = std::fs::remove_file(&path);
     std::fs::write(&path, body).with_context(|| format!("failed to write {}", path.display()))
 }
 
@@ -92,6 +99,61 @@ mod tests {
         write(&home, Path::new("/first")).unwrap();
         write(&home, Path::new("/second")).unwrap();
         assert_eq!(read(&home).unwrap().origin, "/second");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_write_that_cannot_complete_leaves_no_stale_value_behind() {
+        let home = tmp_home("write-fails");
+        write(&home, Path::new("/first")).unwrap();
+        assert_eq!(read(&home).unwrap().origin, "/first");
+
+        // Force the next write to fail outright: replace the sidecar path
+        // with a directory, so neither the removal nor the write below can
+        // touch it as a regular file.
+        let path = home.join(FILE_NAME);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        assert!(write(&home, Path::new("/second")).is_err());
+
+        // Whatever happened, `list` must never render this box as
+        // "/first" again -- blank (None) is acceptable, the stale old
+        // value is not.
+        assert_ne!(read(&home).map(|s| s.origin), Some("/first".to_string()));
+
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn write_removes_a_stale_sidecar_rather_than_writing_through_it() {
+        // A box home reused across a `--force` recreate could, in
+        // principle, have anything left at `cbox.json` by a previous
+        // occupant -- including something `fs::write`'s open-and-truncate
+        // would follow rather than replace, like a symlink. Unlinking first
+        // (this test's actual point) means the new sidecar always lands as
+        // a plain file, and whatever the old path pointed at is untouched.
+        let home = tmp_home("symlink-stale");
+        let path = home.join(FILE_NAME);
+        let elsewhere = home.join("elsewhere.json");
+        std::fs::write(&elsewhere, r#"{"origin":"/stale-elsewhere"}"#).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &path).unwrap();
+
+        write(&home, Path::new("/second")).expect("write should succeed");
+
+        let metadata = std::fs::symlink_metadata(&path).unwrap();
+        assert!(
+            !metadata.file_type().is_symlink(),
+            "sidecar path should be a plain file after write, not a followed symlink"
+        );
+        assert_eq!(read(&home).unwrap().origin, "/second");
+        let elsewhere_contents = std::fs::read_to_string(&elsewhere).unwrap();
+        assert!(
+            elsewhere_contents.contains("stale-elsewhere"),
+            "the file the old symlink pointed at must be untouched: {elsewhere_contents:?}"
+        );
+
         std::fs::remove_dir_all(&home).ok();
     }
 }
