@@ -82,6 +82,15 @@ as an async coroutine via box._sync_helper._sync(session()), using box._box (the
 native async API) directly. Verified: TUI renders correctly (raw byte chunks, not
 line-oriented); Claude reached the API through the gateway.
 
+Detecting the shell's exit needed its own workaround. After the guest process
+dies, boxlite's stdout iterator silently stalls — no exception, no EOF — and
+native_exec.wait() hangs the same way, so neither can end the session. The one
+thing that does react is send_input, which raises once the process is gone. So
+pump_in selects on the local tty with a 0.3s timeout and, whenever nothing was
+typed, sends an empty write purely to ask whether the far end is still there.
+It has to be an *empty* write: the box's PTY echoes, so a NUL probe paints a
+stray "^@" on every prompt.
+
 == Running interactively ==
 
 With --interactive the automated checks run first and then the terminal is handed
