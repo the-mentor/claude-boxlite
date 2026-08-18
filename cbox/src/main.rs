@@ -1,5 +1,6 @@
 mod attach;
 mod boxopts;
+mod client;
 mod commands;
 mod config;
 mod env;
@@ -48,6 +49,12 @@ enum Commands {
     },
     /// Print the box name that would be used here, and why.
     Name { name: Option<String> },
+    /// Open a session in a running box.
+    Exec {
+        name: Option<String>,
+        #[arg(last = true)]
+        cmd: Vec<String>,
+    },
     /// Stop and remove a box.
     Down { name: Option<String> },
     /// List boxes across every per-name home.
@@ -75,6 +82,7 @@ async fn main() -> Result<()> {
             })
             .await?;
         }
+        Commands::Exec { name, cmd } => commands::exec::run(name, cmd).await?,
         Commands::Down { name } => commands::down::run(name).await?,
         Commands::List { all } => commands::list::run(all).await?,
     }
