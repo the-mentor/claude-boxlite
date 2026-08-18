@@ -183,4 +183,40 @@ mod tests {
         assert_eq!(r.name, "From-Env");
         unsafe { std::env::remove_var("CBOX_NAME") };
     }
+
+    #[test]
+    fn git_root_name_is_used_and_shared_by_subdirectories() {
+        // SAFETY: test-only env mutation; suite runs with --test-threads=1.
+        unsafe { std::env::remove_var("CBOX_NAME") };
+
+        let repo = std::env::temp_dir().join(format!("cbox-naming-test-{}", std::process::id()));
+        let subdir = repo.join("nested").join("deeper");
+        std::fs::create_dir_all(&subdir).expect("create temp repo tree");
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .arg("init")
+            .arg("--quiet")
+            .status()
+            .expect("run git init");
+        assert!(status.success(), "git init failed");
+
+        // Canonicalize: /tmp is a symlink on macOS, and git reports the
+        // resolved path as the toplevel, not the symlinked one.
+        let repo = repo.canonicalize().expect("canonicalize repo path");
+        let subdir = repo.join("nested").join("deeper");
+        let expected_name = repo.file_name().and_then(|s| s.to_str()).unwrap().to_string();
+
+        let at_root = resolve(None, &repo);
+        assert_eq!(at_root.source, NameSource::GitRoot);
+        assert_eq!(at_root.name, expected_name);
+
+        // The whole point of deriving from the git root: a subdirectory
+        // resolves to the same name, not its own basename ("deeper").
+        let at_subdir = resolve(None, &subdir);
+        assert_eq!(at_subdir.source, NameSource::GitRoot);
+        assert_eq!(at_subdir.name, expected_name);
+
+        std::fs::remove_dir_all(&repo).expect("clean up temp repo");
+    }
 }
