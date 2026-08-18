@@ -33,13 +33,47 @@ the gateway rewrites it. The `anthropic/gateway-reachable` check confirms the
 gateway is up and holds a valid key, not BoxLite substitution. Verified working
 in the interactive session (Claude Code responded successfully).
 
-GitHub: BoxLite secret substitution for GH_TOKEN could not be confirmed via HTTPS
-(api.github.com returned 503 during a GitHub infrastructure outage). A separate
-HTTP capture-server test (plain HTTP to host.boxlite.internal:19999) confirmed
-that BoxLite does NOT substitute in plain HTTP — the placeholder arrived
-unmodified. Substitution appears to be HTTPS-only (TLS MITM). Retest the HTTPS
-path once GitHub recovers to determine whether HTTPS substitution works.
-Custody check passed: the guest sees only the placeholder.
+GitHub: both `gh` and git work, but they need two different secrets, because the
+proxy substitutes by literal string match and the two protocols want the
+credential in incompatible shapes.
+
+`gh` is the easy one: it sends `Authorization: Bearer <BOXLITE_SECRET:gh>` to
+api.github.com, the placeholder is right there on the wire, the proxy swaps it.
+
+git took work. Its first failure was the credential helper: git takes the
+helper's token and builds `Authorization: Basic base64(user:token)` itself, and
+base64 hides the placeholder from the matcher, so the raw-token secret can never
+reach a git request. The obvious dodge — force a Bearer header via
+http.extraHeader — is also dead: measured on the host with a real token,
+github.com's git-upload-pack returns 401 for Bearer and 200 for Basic. git to
+github.com is Basic or nothing.
+
+What works is moving the base64 to the host side. Store the *already encoded*
+credential as the secret's value and put the placeholder where the encoded blob
+belongs, using http.extraHeader (passed through verbatim, unlike helper-supplied
+credentials, which git encodes itself):
+
+    secret "gh_basic".value = base64("x-access-token:" + real_token)
+    git config --global http.https://github.com/.extraHeader \
+        "Authorization: Basic <BOXLITE_SECRET:gh_basic>"
+
+The placeholder reaches the wire intact, the proxy matches it, GitHub receives
+valid Basic auth. Verified from a box holding only placeholders: `git clone` of a
+private repo, then commit and `git push -u` of a new branch — reads and writes
+both. Also blank credential.helper, or git falls back to it on a 401 and sends
+base64'd garbage.
+
+So BoxLite secrets can replace the GH_TOKEN passthrough in docs/design/general.md
+outright: `gh` and git both authenticate with the real token never entering the
+guest. The remaining work is not verification but plumbing — the two secrets and
+the extraHeader config have to move into the justfile and base/Dockerfile, since
+today they only exist for the lifetime of this spike's box.
+
+A separate HTTP capture-server test (plain HTTP to host.boxlite.internal:19999)
+confirmed substitution is HTTPS-only: over plain HTTP the placeholder arrived
+unmodified, because there is no TLS MITM to rewrite through.
+
+Custody check passed throughout: the guest sees only placeholders.
 
 Interactive attach: The sync wrapper's _sync() uses greenlet fiber switching that
 only works from the thread that created the dispatcher fiber — iterating stdout in
@@ -75,6 +109,7 @@ host-side) and the custom image already built and pushed (`just build`). Running
 it under a bare `python3` also works if `boxlite` is importable there.
 """
 import argparse
+import base64
 import json
 import os
 import sys
@@ -84,9 +119,17 @@ try:
     # SyncBoxlite, not Boxlite: the latter is the native async runtime, whose
     # create()/exec() return coroutines. The sync wrapper needs the [sync] extra
     # (greenlet) — without it the import below silently lacks SyncBoxlite.
-    from boxlite import BoxOptions, ImageRegistry, Options, Secret, SyncBoxlite
+    from boxlite import (
+        ApiKeyCredential,
+        BoxliteRestOptions,
+        BoxOptions,
+        ImageRegistry,
+        Options,
+        Secret,
+        SyncBoxlite,
+    )
 except ImportError:  # deferred to main() so --help works without the dependency
-    BoxOptions = ImageRegistry = Options = Secret = SyncBoxlite = None
+    ApiKeyCredential = BoxliteRestOptions = BoxOptions = ImageRegistry = Options = Secret = SyncBoxlite = None
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -268,6 +311,25 @@ def main():
     if gh_token:
         secrets.append(Secret(name="gh", value=gh_token, hosts=["github.com", "api.github.com"]))
         env.append(("GH_TOKEN", placeholder("gh")))
+        # A second secret for git, because git cannot use the first one. Git only
+        # authenticates to github.com with Basic, i.e. base64(user:token) — and
+        # base64 hides the placeholder from the proxy's literal string match, so
+        # the raw-token secret above can never reach a git request. Verified on
+        # the host: Bearer gets 401 from git-upload-pack, Basic gets 200, so
+        # http.extraHeader with a Bearer token is not a way around it either.
+        #
+        # The trick is to move the base64 to the host side: store the already
+        # encoded credential as the secret's value, and put the placeholder where
+        # the encoded blob belongs. git's http.extraHeader is passed through
+        # verbatim (unlike helper-supplied credentials, which git encodes itself),
+        # so the placeholder reaches the wire intact for the proxy to match.
+        secrets.append(
+            Secret(
+                name="gh_basic",
+                value=base64.b64encode(f"x-access-token:{gh_token}".encode()).decode(),
+                hosts=["github.com"],
+            )
+        )
     if anthropic_key:
         secrets.append(Secret(name="anthropic", value=anthropic_key, hosts=["api.anthropic.com"]))
         env.append(("ANTHROPIC_API_KEY", placeholder("anthropic")))
@@ -283,10 +345,35 @@ def main():
     # init_default() only registers the options for the global runtime; it returns
     # None. The runtime itself comes from default(), and its dispatcher fiber has
     # to be running before create()/exec(), which is what the context manager does.
-    SyncBoxlite.init_default(
-        Options(home_dir=args.home, image_registries=load_registries(args.config))
-    )
-    with SyncBoxlite.default() as runtime:
+    rest_url = os.environ.get("BOXLITE_REST_URL")
+    if rest_url and secrets:
+        sys.exit(
+            "boxlite-secrets-spike: BOXLITE_REST_URL is set but the 'secrets' field\n"
+            "  (GH_TOKEN / ANTHROPIC_API_KEY substitution) requires the local runtime —\n"
+            "  the host-side MITM proxy only exists in-process. Unset BOXLITE_REST_URL\n"
+            "  to use the local runtime, or unset GH_TOKEN/ANTHROPIC_API_KEY to run\n"
+            "  without secret injection (nothing to test, though)."
+        )
+    if rest_url:
+        from boxlite import Boxlite
+        api_key = os.environ.get("BOXLITE_API_KEY")
+        rest_opts = BoxliteRestOptions(
+            url=rest_url,
+            credential=ApiKeyCredential(api_key) if api_key else None,
+        )
+        # SyncBoxlite has no .rest() factory, but its .default() uses the same
+        # object.__new__ pattern — mirror it here for the REST case.
+        _rt = object.__new__(SyncBoxlite)
+        _rt._boxlite = Boxlite.rest(rest_opts)
+        _rt._loop = _rt._dispatcher_fiber = _rt._sync_helper = None
+        _rt._own_loop = _rt._started = False
+        print(f"boxlite-secrets-spike: using remote runtime at {rest_url}\n", flush=True)
+    else:
+        SyncBoxlite.init_default(
+            Options(home_dir=args.home, image_registries=load_registries(args.config))
+        )
+        _rt = SyncBoxlite.default()
+    with _rt as runtime:
         box = None
         try:
             box = runtime.create(
@@ -350,6 +437,20 @@ def main():
                 _, out, err = run(box, "gh api user --jq .login 2>&1 || true")
                 report("github/gh-cli", "PASS" if out and "error" not in out.lower() else "FAIL",
                        out[:120] if out else err[:120] or "no output")
+
+                # Point git at the pre-encoded secret and blank the credential
+                # helper, so the only credential in play is the substitutable
+                # header. Without the blanking, git falls back to the helper on a
+                # 401 and sends base64'd garbage, which muddies the verdict.
+                run(box, (
+                    "git config --global http.https://github.com/.extraHeader "
+                    f"'Authorization: Basic {placeholder('gh_basic')}' && "
+                    "git config --global credential.helper '' && "
+                    # Not about secrets — just so a commit in the interactive
+                    # session does not stop to ask who you are.
+                    "git config --global user.email box@boxlite.local && "
+                    "git config --global user.name boxlite"
+                ))
 
                 if args.git_remote:
                     _, out, err = run(box, f"git ls-remote {args.git_remote!r} HEAD 2>&1 | head -1 || true")
@@ -514,10 +615,11 @@ def attach(box, cmd):
                 )
                 if not ready:
                     # No user input — probe whether the process is still alive.
-                    # NUL byte is ignored by bash/readline/vim; if send_input
-                    # raises, the process has exited.
+                    # Must be an empty write: the box's PTY has echo on, so any
+                    # actual byte comes straight back to the screen (a NUL probe
+                    # renders as a stray "^@" on every prompt).
                     try:
-                        await stdin.send_input(b"\x00")
+                        await stdin.send_input(b"")
                     except Exception:
                         break
                     continue
