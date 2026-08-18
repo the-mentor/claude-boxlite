@@ -65,10 +65,18 @@ pub fn parse_secret_flag(s: &str) -> Result<SecretSpec> {
     Ok(SecretSpec { name: name.to_string(), env_var: env_var.to_string(), hosts })
 }
 
+/// A variable counts as a usable source only if it is both set and non-empty.
+/// `github_spec` and `build` must agree on this predicate: picking a variable
+/// here that `build` would then reject as empty produces a misleading error
+/// pointing at the wrong variable.
+fn set_and_non_empty(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|v| !v.is_empty())
+}
+
 /// The GitHub preset. Its `name` is a marker: `build` expands it into the two
 /// secrets the two protocols need.
 pub fn github_spec() -> SecretSpec {
-    let env_var = if std::env::var("GH_TOKEN").is_ok() { "GH_TOKEN" } else { "GITHUB_TOKEN" };
+    let env_var = if set_and_non_empty("GH_TOKEN").is_some() { "GH_TOKEN" } else { "GITHUB_TOKEN" };
     SecretSpec {
         name: "gh".into(),
         env_var: env_var.into(),
@@ -84,9 +92,18 @@ pub fn build(specs: &[SecretSpec]) -> Result<Built> {
     let mut source_vars = Vec::new();
 
     for spec in specs {
-        let value = std::env::var(&spec.env_var)
-            .ok()
-            .filter(|v| !v.is_empty())
+        // Hosts are mandatory on every constructed secret — this is the
+        // property the feature exists to provide, so it is enforced here
+        // rather than trusted from the caller. The "gh" marker is exempt: it
+        // hardcodes its own two host lists below instead of using spec.hosts.
+        if spec.name != "gh" && spec.hosts.is_empty() {
+            bail!(
+                "--secret {} has no hosts. An unscoped secret is substituted on requests to any host.",
+                spec.name
+            );
+        }
+
+        let value = set_and_non_empty(&spec.env_var)
             .ok_or_else(|| anyhow!("--secret {} names {}, which is unset or empty", spec.name, spec.env_var))?;
 
         source_vars.push(spec.env_var.clone());
@@ -138,6 +155,28 @@ pub fn git_bootstrap_script() -> String {
 mod tests {
     use super::*;
 
+    /// Panic-safe env var mutation for tests. Under the mandated
+    /// `--test-threads=1`, a bare `set_var` with no matching `remove_var`
+    /// leaks into every test that runs afterward if the test panics before
+    /// reaching its own cleanup. Binding the guard to `_` still drops it
+    /// immediately, so every call site must bind it to a named local.
+    struct EnvGuard {
+        key: &'static str,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            unsafe { std::env::set_var(key, value) };
+            Self { key }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            unsafe { std::env::remove_var(self.key) };
+        }
+    }
+
     #[test]
     fn placeholder_matches_the_python_binding_format() {
         assert_eq!(placeholder("gh"), "<BOXLITE_SECRET:gh>");
@@ -184,7 +223,7 @@ mod tests {
 
     #[test]
     fn build_sets_the_guest_variable_to_the_placeholder_not_the_value() {
-        unsafe { std::env::set_var("CBOX_T_TOKEN", "super-secret") };
+        let _guard = EnvGuard::set("CBOX_T_TOKEN", "super-secret");
         let spec = SecretSpec {
             name: "mysecret".into(),
             env_var: "CBOX_T_TOKEN".into(),
@@ -202,7 +241,7 @@ mod tests {
 
     #[test]
     fn github_produces_two_secrets_scoped_to_different_hosts() {
-        unsafe { std::env::set_var("GH_TOKEN", "ghp_example") };
+        let _guard = EnvGuard::set("GH_TOKEN", "ghp_example");
         let built = build(&[github_spec()]).unwrap();
         assert_eq!(built.secrets.len(), 2);
 
@@ -214,11 +253,28 @@ mod tests {
         assert_eq!(basic.hosts, vec!["github.com".to_string()]);
     }
 
+    /// `GH_TOKEN` set-but-empty must not shadow a perfectly usable
+    /// `GITHUB_TOKEN` — `github_spec` and `build` must agree on what "usable"
+    /// means, or this fails with a misleading error about the wrong variable.
+    #[test]
+    fn github_prefers_github_token_when_gh_token_is_set_but_empty() {
+        let _gh = EnvGuard::set("GH_TOKEN", "");
+        let _ghub = EnvGuard::set("GITHUB_TOKEN", "ghp_from_github_token");
+
+        let spec = github_spec();
+        assert_eq!(spec.env_var, "GITHUB_TOKEN");
+
+        let built = build(&[spec]).unwrap();
+        assert_eq!(built.source_vars, vec!["GITHUB_TOKEN".to_string()]);
+        let gh = built.secrets.iter().find(|s| s.name == "gh").unwrap();
+        assert_eq!(gh.value, "ghp_from_github_token");
+    }
+
     /// The whole git fix rests on this, and it is the one value never
     /// eyeballed in any output.
     #[test]
     fn the_git_blob_decodes_to_what_github_expects() {
-        unsafe { std::env::set_var("GH_TOKEN", "ghp_example") };
+        let _guard = EnvGuard::set("GH_TOKEN", "ghp_example");
         let built = build(&[github_spec()]).unwrap();
         let basic = built.secrets.iter().find(|s| s.name == "gh_basic").unwrap();
 
@@ -227,6 +283,21 @@ mod tests {
         // And the placeholder must NOT survive encoding — that asymmetry is
         // precisely why the credential-helper path cannot work and this can.
         assert!(!basic.value.contains("x-access-token"));
+    }
+
+    /// `parse_secret_flag` already rejects an empty host list, but `build` is
+    /// where `boxlite::Secret`s actually get constructed and handed across
+    /// the SDK boundary — the "hosts are mandatory" invariant must not rest
+    /// solely on caller discipline.
+    #[test]
+    fn build_rejects_a_hand_constructed_spec_with_no_hosts() {
+        let spec = SecretSpec {
+            name: "x".into(),
+            env_var: "CBOX_T_NOHOSTS".into(),
+            hosts: vec![],
+        };
+        let err = build(&[spec]).unwrap_err().to_string();
+        assert!(err.contains("no hosts"), "names the problem: {err}");
     }
 
     #[test]
