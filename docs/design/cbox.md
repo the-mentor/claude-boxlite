@@ -8,11 +8,11 @@ Claims are tagged **verified** (measured against `boxlite 0.9.7`, the CLI, or a 
 **read from source** (asserted by the crate's own code but not exercised), or **open**. The
 split is load-bearing: two of the open items can still change the design.
 
-**Unmerged dependencies.** This document cites `docs/design/boxlite-sdk.md`,
-`scripts/boxlite-secrets-spike.py`, and `scripts/boxlite-secrets-spike-rs`, none of which are
-on `main` yet — they live on `claude/sdk-language-mitm-secrets-k9o5m4`. That branch should
-land before this design does, or the citations dangle and the evidence behind every
-**verified** tag below is unreadable.
+**Unmerged dependencies.** `scripts/boxlite-secrets-spike.py` and
+`scripts/boxlite-secrets-spike-rs` are cited throughout but are not on `main` — they live on
+`claude/sdk-language-mitm-secrets-k9o5m4`. That branch should land before this design does, or
+the evidence behind every **verified** tag below is unreadable. `docs/design/boxlite-sdk.md`
+was copied across from that branch alongside this document.
 
 Predecessor: `docs/design/boxlite-sdk.md` evaluated driving BoxLite through its SDK and ended
 by parking the language choice — "pick a language and port the `run`/`exec` paths, keeping
@@ -411,16 +411,36 @@ Explicitly not `bincode`, which the dependency audit flagged as unmaintained.
 - frame codec round-trips, including partial reads and oversized frames
 
 Not unit-testable and verified by running: TTY attach, the socket path, and substitution
-itself. The two spikes remain the integration harness — they already run these checks against
-a real box, and `scripts/boxlite-secrets-spike-rs` shares the attach implementation.
+itself. These need a booted box and real credentials, so they cannot be `cargo test`. The two
+spikes remain the integration harness — they already run these checks against a real box, and
+`scripts/boxlite-secrets-spike-rs` shares the attach implementation.
+
+One integration check is load-bearing enough to name explicitly, because an open question
+depends on it and its failure mode is silent:
+
+```
+cbox up <name>                 # box created with secrets; exit the session
+cbox exec <name> -- gh api user --jq .login
+```
+
+Run with the socket path disabled so `exec` is forced through connect-or-fallback into its own
+runtime. Success means secrets live with the box's shim and the fallback is sound. Failure
+means substitution belongs to the creating process, and the fallback must be deleted rather
+than fixed — `exec` would have to require the socket and fail loudly when it is absent, since
+a box that has quietly lost substitution is indistinguishable from a working one until a
+request gets rejected.
 
 ## Open questions
 
 These can still change the design.
 
 - **Do secrets survive the creating process?** Read from source as yes (the shim creates
-  gvproxy). If no, the socket path becomes mandatory rather than an optimization, because the
-  fallback would silently lose substitution. Verify before implementing.
+  gvproxy). If no, the socket path becomes mandatory rather than an optimization, because
+  `exec`'s fallback would silently lose substitution — and *silently* is the problem: a box
+  that has lost substitution looks identical to a working one until a request is actually
+  rejected. Checked during implementation as an integration test (see Testing) rather than as
+  a gate beforehand. The cost of being wrong is bounded: it deletes the fallback path, it does
+  not change the rest of the architecture.
 - **Does the SDK replace `clean-cache`'s sqlite surgery?** `runtime.images()` exists; whether
   it exposes tag→digest invalidation is unchecked. If not, the `DELETE FROM image_index`
   workaround ports as-is and the design should say so plainly rather than pretend otherwise.
@@ -437,10 +457,10 @@ These can still change the design.
 
 ## Sequencing
 
-1. Verify secrets survive the creating process. It is the one open item that changes the
-   architecture rather than a detail.
-2. Land `cbox up`/`exec`/`down`/`list` with GitHub secrets and derived naming, forwarded from
-   the justfile. This is the milestone that retires the `GH_TOKEN` passthrough.
+1. Land `cbox up`/`exec`/`down`/`list` with GitHub secrets and derived naming, forwarded from
+   the justfile. This is the milestone that retires the `GH_TOKEN` passthrough. Land the
+   secrets-survival integration check with it — `exec` cannot be called done until the
+   fallback path is known to keep substitution.
 3. Add observability, then `--allow-net`, then resource limits, then `cp`/`--publish`.
 4. Settle `clean-cache` — port the sqlite workaround or replace it, and record which.
 5. Revisit Anthropic only if the `x-api-key` and Node CA questions both resolve favorably.
