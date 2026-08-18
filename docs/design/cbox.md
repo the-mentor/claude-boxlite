@@ -250,6 +250,28 @@ git config --global credential.helper ''
 Blanking the helper is required, not tidiness: without it git falls back to it on a 401 and
 sends base64'd garbage. cbox applies both settings when it creates a box with GitHub secrets.
 
+**Why cbox applies these at runtime rather than baking them into `custom/Dockerfile`.** The
+`extraHeader` value is a fixed placeholder, so it looks like static image configuration — and
+the image is already where the related git credential config lives. But baking it
+unconditionally breaks the case with no GitHub secret: the box would still send
+`Authorization: Basic <BOXLITE_SECRET:gh_basic>` with nothing to substitute it, and GitHub
+returns 401 even for an anonymous clone of a public repo, which works today. Something at
+runtime has to know whether a GitHub secret is actually in play, and that is cbox.
+
+The cost of that choice is an assumption: cbox is running `git config` inside the guest, so it
+assumes the image has git. It applies the bootstrap **non-fatally** for exactly that reason —
+probe for git first, warn and skip if absent, and never fail `cbox up` over it. A box that
+skipped the bootstrap will 401 on its first git operation against GitHub, which is visible
+immediately and named by the warning; aborting the whole session over an inessential
+configuration step would be worse.
+
+**Required follow-up on the image.** `custom/Dockerfile` currently sets
+`credential.https://github.com.helper` to `gh auth git-credential`. Under the two-secret model
+that line is not merely redundant, it is harmful: on a 401 git retries through that helper and
+sends base64'd placeholder garbage — precisely the confusing failure the `credential.helper ''`
+blanking exists to prevent. cbox blanks it per-box, so cbox-launched boxes are correct, but the
+line should be deleted from the image for anyone using it directly.
+
 **Verified end to end** from a box holding only placeholders: `gh api user`, `git clone` of a
 private repo, and commit plus `git push -u` of a new branch. Custody holds throughout —
 `printenv GH_TOKEN` in the guest returns the placeholder and nothing else, which is the check
@@ -290,7 +312,9 @@ The flag names the environment variable holding the value; the value itself neve
 history and `ps` output." `ps` is readable by any local process.
 
 Hosts are mandatory. An unscoped secret would be substituted on requests to any host, which
-inverts the property the feature exists to provide.
+inverts the property the feature exists to provide. That check belongs at the point where the
+SDK's `Secret` is constructed, not only where flags are parsed — the invariant is the security
+property itself, and it should not rest on every future caller remembering to validate first.
 
 Values continue to come from the environment, populated by a gitignored `.env` exactly as
 today. The passthrough list becomes configuration rather than the hardcoded `passthrough_vars`
@@ -378,7 +402,8 @@ uses one top-level directory per component.
 | --- | --- |
 | `main.rs` | clap surface and dispatch only |
 | `naming.rs` | the precedence chain and sanitization |
-| `config.rs` | `registries.local.json` → `ImageRegistry`; home layout; passthrough collection |
+| `config.rs` | `registries.local.json` → `ImageRegistry`; per-box home layout |
+| `env.rs` | `-e` parsing, passthrough collection, secret-conflict rejection |
 | `secrets.rs` | preset table, secret construction, git `extraHeader` bootstrap |
 | `boxopts.rs` | assemble `BoxOptions` from flags, config, and secrets |
 | `attach.rs` | TTY attach loop, lifted from the Rust spike |
