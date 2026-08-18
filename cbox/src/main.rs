@@ -8,6 +8,8 @@ mod proto;
 mod secrets;
 mod server;
 mod sidecar;
+#[cfg(test)]
+mod test_env_lock;
 
 use std::path::PathBuf;
 

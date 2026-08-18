@@ -118,6 +118,7 @@ mod tests {
 
     #[test]
     fn explicit_value_beats_the_passthrough_list() {
+        let _lock = crate::test_env_lock::lock();
         unsafe { std::env::set_var("CBOX_T_OVERRIDE", "from-host") };
         let out = compose(
             &["CBOX_T_OVERRIDE=from-flag".to_string()],
@@ -130,6 +131,7 @@ mod tests {
 
     #[test]
     fn unset_variables_are_skipped_not_passed_empty() {
+        let _lock = crate::test_env_lock::lock();
         unsafe { std::env::remove_var("CBOX_T_ABSENT") };
         let out = compose(&[], &["CBOX_T_ABSENT".to_string()], &[]).unwrap();
         assert!(out.is_empty());
@@ -137,6 +139,7 @@ mod tests {
 
     #[test]
     fn bare_e_flag_forwards_from_the_host() {
+        let _lock = crate::test_env_lock::lock();
         unsafe { std::env::set_var("CBOX_T_BARE", "v") };
         let out = compose(&["CBOX_T_BARE".to_string()], &[], &[]).unwrap();
         assert_eq!(out, vec![("CBOX_T_BARE".to_string(), "v".to_string())]);
@@ -144,6 +147,7 @@ mod tests {
 
     #[test]
     fn a_secret_source_must_not_also_be_passed_through() {
+        let _lock = crate::test_env_lock::lock();
         unsafe { std::env::set_var("CBOX_T_SECRET", "real-token") };
         let err = compose(&[], &["CBOX_T_SECRET".to_string()], &["CBOX_T_SECRET".to_string()])
             .unwrap_err()

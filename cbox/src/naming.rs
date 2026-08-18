@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn explicit_name_wins_and_is_still_sanitized() {
-        // SAFETY: test-only env mutation; suite runs with --test-threads=1.
+        let _lock = crate::test_env_lock::lock();
         unsafe { std::env::remove_var("CBOX_NAME") };
         let r = resolve(Some("My Box"), &PathBuf::from("/tmp"));
         assert_eq!(r.source, NameSource::Explicit);
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn cwd_basename_is_used_when_not_in_a_repo() {
-        // SAFETY: test-only env mutation; suite runs with --test-threads=1.
+        let _lock = crate::test_env_lock::lock();
         unsafe { std::env::remove_var("CBOX_NAME") };
         // /tmp is not a git repo on any machine this runs on.
         let r = resolve(None, &PathBuf::from("/tmp"));
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn root_directory_falls_back() {
-        // SAFETY: test-only env mutation; suite runs with --test-threads=1.
+        let _lock = crate::test_env_lock::lock();
         unsafe { std::env::remove_var("CBOX_NAME") };
         let r = resolve(None, &PathBuf::from("/"));
         assert_eq!(r.source, NameSource::Fallback);
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn env_var_is_used_when_set_and_no_explicit_name() {
-        // SAFETY: test-only env mutation; suite runs with --test-threads=1.
+        let _lock = crate::test_env_lock::lock();
         unsafe { std::env::set_var("CBOX_NAME", "From Env") };
         let r = resolve(None, &PathBuf::from("/tmp"));
         assert_eq!(r.source, NameSource::EnvVar);
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn git_root_name_is_used_and_shared_by_subdirectories() {
-        // SAFETY: test-only env mutation; suite runs with --test-threads=1.
+        let _lock = crate::test_env_lock::lock();
         unsafe { std::env::remove_var("CBOX_NAME") };
 
         let repo = std::env::temp_dir().join(format!("cbox-naming-test-{}", std::process::id()));

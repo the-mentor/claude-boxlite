@@ -167,11 +167,15 @@ pub fn git_bootstrap_script() -> String {
 mod tests {
     use super::*;
 
-    /// Panic-safe env var mutation for tests. Under the mandated
-    /// `--test-threads=1`, a bare `set_var` with no matching `remove_var`
-    /// leaks into every test that runs afterward if the test panics before
-    /// reaching its own cleanup. Binding the guard to `_` still drops it
-    /// immediately, so every call site must bind it to a named local.
+    /// Panic-safe env var mutation for tests. A bare `set_var` with no
+    /// matching `remove_var` leaks into every test that runs afterward if
+    /// the test panics before reaching its own cleanup. Binding the guard to
+    /// `_` still drops it immediately, so every call site must bind it to a
+    /// named local.
+    ///
+    /// Callers must hold `crate::test_env_lock::lock()` for the duration of
+    /// the test (see each test's own `let _lock = ...` at the top) — this
+    /// guard only handles cleanup-on-panic, not cross-test serialization.
     struct EnvGuard {
         key: &'static str,
     }
@@ -223,6 +227,7 @@ mod tests {
 
     #[test]
     fn build_reports_a_missing_source_variable() {
+        let _lock = crate::test_env_lock::lock();
         unsafe { std::env::remove_var("CBOX_T_MISSING") };
         let spec = SecretSpec {
             name: "x".into(),
@@ -235,6 +240,7 @@ mod tests {
 
     #[test]
     fn build_sets_the_guest_variable_to_the_placeholder_not_the_value() {
+        let _lock = crate::test_env_lock::lock();
         let _guard = EnvGuard::set("CBOX_T_TOKEN", "super-secret");
         let spec = SecretSpec {
             name: "mysecret".into(),
@@ -258,6 +264,7 @@ mod tests {
     /// is the exact bug this function exists to prevent.
     #[test]
     fn has_github_token_treats_a_blank_gh_token_as_absent() {
+        let _lock = crate::test_env_lock::lock();
         unsafe { std::env::remove_var("GH_TOKEN") };
         unsafe { std::env::remove_var("GITHUB_TOKEN") };
         assert!(!has_github_token(), "both unset");
@@ -271,6 +278,7 @@ mod tests {
 
     #[test]
     fn github_produces_two_secrets_scoped_to_different_hosts() {
+        let _lock = crate::test_env_lock::lock();
         let _guard = EnvGuard::set("GH_TOKEN", "ghp_example");
         let built = build(&[github_spec()]).unwrap();
         assert_eq!(built.secrets.len(), 2);
@@ -288,6 +296,7 @@ mod tests {
     /// means, or this fails with a misleading error about the wrong variable.
     #[test]
     fn github_prefers_github_token_when_gh_token_is_set_but_empty() {
+        let _lock = crate::test_env_lock::lock();
         let _gh = EnvGuard::set("GH_TOKEN", "");
         let _ghub = EnvGuard::set("GITHUB_TOKEN", "ghp_from_github_token");
 
@@ -304,6 +313,7 @@ mod tests {
     /// eyeballed in any output.
     #[test]
     fn the_git_blob_decodes_to_what_github_expects() {
+        let _lock = crate::test_env_lock::lock();
         let _guard = EnvGuard::set("GH_TOKEN", "ghp_example");
         let built = build(&[github_spec()]).unwrap();
         let basic = built.secrets.iter().find(|s| s.name == "gh_basic").unwrap();

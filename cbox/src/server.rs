@@ -65,27 +65,55 @@ async fn handle(stream: UnixStream, litebox: Arc<LiteBox>) -> Result<()> {
     let mut stdin_writer = exec.stdin().context("no stdin")?;
     let exec = Arc::new(exec);
 
+    // Whether the loop ended because the guest process's own stdout closed
+    // (nothing to clean up — it already exited) or because the *client*
+    // went away while the guest was still running. Unlike attach.rs, where
+    // the "client" is the local terminal and its process exiting ends the
+    // session by definition, here a disconnected remote client leaves the
+    // guest-side exec running with nothing left to consume its output — it
+    // must be killed explicitly or it leaks for the rest of the box's life.
+    let mut client_gone = false;
+
     loop {
         tokio::select! {
             chunk = out.next() => match chunk {
                 Some(text) => {
-                    write_frame(&mut writer, &Frame::Stdout(text.into_bytes())).await?;
+                    if write_frame(&mut writer, &Frame::Stdout(text.into_bytes())).await.is_err() {
+                        // The client is no longer reachable.
+                        client_gone = true;
+                        break;
+                    }
                 }
-                None => break,
+                None => break, // guest process's stdout closed on its own
             },
-            frame = read_frame(&mut reader) => match frame? {
-                Some(Frame::Stdin(bytes)) => {
+            frame = read_frame(&mut reader) => match frame {
+                Ok(Some(Frame::Stdin(bytes))) => {
                     if stdin_writer.write(&bytes).await.is_err() {
                         break;
                     }
                 }
-                Some(Frame::Resize { rows, cols }) => {
+                Ok(Some(Frame::Resize { rows, cols })) => {
                     let _ = exec.resize_tty(rows as u32, cols as u32).await;
                 }
-                Some(_) => {}
-                None => break, // client disconnected
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    // Client disconnected cleanly.
+                    client_gone = true;
+                    break;
+                }
+                Err(_) => {
+                    // Truncated frame — the connection dropped mid-write.
+                    client_gone = true;
+                    break;
+                }
             },
         }
+    }
+
+    if client_gone {
+        // Best-effort: the session is already over, so a failed kill must
+        // not turn into an error here.
+        let _ = exec.kill().await;
     }
 
     let code = exec.wait().await.map(|r| r.code()).unwrap_or(0);
