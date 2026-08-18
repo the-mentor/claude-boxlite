@@ -84,9 +84,12 @@ pub fn build(
         // Mandatory. The SDK default (false) stops the box when the creating
         // runtime drops, so exiting `cbox up` would destroy it.
         detach: true,
-        // Safe alongside detach: a dropped runtime no longer stops the box, so
-        // removal happens only on an explicit `cbox down`.
-        auto_remove: true,
+        // Must be false alongside detach: BoxOptions::sanitize() in the SDK
+        // rejects auto_remove=true with detach=true outright ("Detached boxes
+        // should use auto_remove=false for manual lifecycle control"). A
+        // dropped runtime no longer stops the box, so removal happens only on
+        // an explicit `cbox down`.
+        auto_remove: false,
         ..Default::default()
     })
 }
