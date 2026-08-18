@@ -44,6 +44,14 @@ enum Commands {
     },
     /// Print the box name that would be used here, and why.
     Name { name: Option<String> },
+    /// Stop and remove a box.
+    Down { name: Option<String> },
+    /// List boxes across every per-name home.
+    List {
+        /// Include stopped boxes.
+        #[arg(short, long)]
+        all: bool,
+    },
 }
 
 #[tokio::main]
@@ -63,6 +71,8 @@ async fn main() -> Result<()> {
             })
             .await?;
         }
+        Commands::Down { name } => commands::down::run(name).await?,
+        Commands::List { all } => commands::list::run(all).await?,
     }
     Ok(())
 }
