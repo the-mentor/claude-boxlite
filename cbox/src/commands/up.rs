@@ -1,6 +1,7 @@
 //! `cbox up` — create a box and attach the terminal to it.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use boxlite::{BoxCommand, BoxliteOptions, BoxliteRuntime, LiteBox};
@@ -94,7 +95,25 @@ pub async fn run(args: UpArgs) -> Result<()> {
         run_git_bootstrap(&litebox).await;
     }
 
-    attach::attach(&litebox, &flags.cmd).await
+    let litebox = Arc::new(litebox);
+    let home_for_socket = config::box_home(&name);
+    let server = tokio::spawn({
+        let litebox = Arc::clone(&litebox);
+        let home = home_for_socket.clone();
+        async move {
+            if let Err(e) = crate::server::serve(litebox, home).await {
+                eprintln!("cbox: control socket stopped: {e}");
+            }
+        }
+    });
+
+    let result = attach::attach(&litebox, &flags.cmd).await;
+
+    // Clean shutdown unlinks the socket. A SIGKILL cannot, which is why the
+    // client also handles a stale socket.
+    server.abort();
+    let _ = std::fs::remove_file(crate::server::socket_path(&home_for_socket));
+    result
 }
 
 /// Point git at the pre-encoded secret so GitHub operations authenticate.
