@@ -422,11 +422,27 @@ Explicitly not `bincode`, which the dependency audit flagged as unmaintained.
 
 | Tag | Frame | Direction |
 | --- | --- | --- |
-| 0 | `Exec {cmd, args, env, tty, rows, cols}` | client → server |
+| 0 | `Exec {cmd, env, rows, cols}` | client → server |
 | 1 | `Stdin` raw bytes | client → server |
 | 2 | `Resize {rows, cols}` | client → server |
 | 3 | `Stdout` raw bytes | server → client |
 | 4 | `Exit {code}` | server → client |
+
+The `Exec` frame carries no `args` or `tty` field, and both omissions are deliberate. `cmd`
+holds the full argv — the server takes `cmd[0]` as the program and `cmd[1..]` as its arguments —
+so a separate `args` field would be redundant. And every session over this socket is an
+interactive attach by construction, so the server always allocates a TTY; a field that only ever
+holds one value is not a field.
+
+`env` **is** carried, and it is not the box's environment. The box's environment is fixed at
+creation and exec'd processes inherit it. What cannot be inherited is the *client's terminal
+identity*, because `cbox exec` runs in a different terminal from the `cbox up` that owns the
+socket. Reading `TERM` on the server side would report whichever terminal started the box.
+`justfile:17-19` records why that matters concretely: Claude Code uses `TERM_PROGRAM` to decide
+whether to enable the Kitty keyboard protocol, "which is what lets a terminal tell Shift+Enter
+apart from plain Enter." Answering that question with the wrong terminal's variables silently
+breaks Shift+Enter in an exec session, so the client sends its own and the server applies them
+to the command.
 
 ## Testing
 
