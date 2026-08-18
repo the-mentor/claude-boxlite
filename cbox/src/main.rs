@@ -1,3 +1,4 @@
+mod config;
 mod naming;
 
 use anyhow::{Context, Result};
