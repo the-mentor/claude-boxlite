@@ -20,6 +20,7 @@ const TAG_EXIT: u8 = 4;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExecRequest {
     pub cmd: Vec<String>,
+    pub env: Vec<(String, String)>,
     pub rows: u16,
     pub cols: u16,
 }
@@ -119,6 +120,11 @@ mod tests {
     async fn every_frame_survives_a_roundtrip() {
         let exec = Frame::Exec(ExecRequest {
             cmd: vec!["claude".into(), "--continue".into()],
+            env: vec![
+                ("TERM_PROGRAM".into(), "WezTerm".into()),
+                ("HOME".into(), "/home/user".into()),
+                ("SPECIAL".into(), "value with \"quotes\" and \\backslash".into()),
+            ],
             rows: 40,
             cols: 120,
         });
@@ -162,9 +168,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn eof_after_tag_but_before_length_is_an_error() {
+        // Tag byte present, but only 2 of 4 length bytes follow.
+        let buf = vec![TAG_STDOUT, 0x00, 0x00];
+        let mut cursor = std::io::Cursor::new(buf);
+        assert!(read_frame(&mut cursor).await.is_err());
+    }
+
+    #[tokio::test]
     async fn an_oversized_length_is_rejected_before_allocating() {
+        // Use a length near u32::MAX so misplaced checks would allocate before failing.
         let mut buf = vec![TAG_STDOUT];
-        buf.extend_from_slice(&(MAX_FRAME as u32 + 1).to_be_bytes());
+        buf.extend_from_slice(&(u32::MAX - 1000).to_be_bytes());
         let mut cursor = std::io::Cursor::new(buf);
         assert!(read_frame(&mut cursor).await.is_err());
     }
