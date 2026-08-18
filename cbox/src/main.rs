@@ -6,6 +6,7 @@ mod env;
 mod naming;
 mod proto;
 mod secrets;
+mod sidecar;
 
 use std::path::PathBuf;
 

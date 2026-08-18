@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use boxlite::{BoxCommand, BoxliteOptions, BoxliteRuntime, LiteBox};
 
-use crate::{attach, boxopts, config, env, naming, secrets};
+use crate::{attach, boxopts, config, env, naming, secrets, sidecar};
 
 pub struct UpArgs {
     pub name: Option<String>,
@@ -54,7 +54,7 @@ pub async fn run(args: UpArgs) -> Result<()> {
         .unwrap_or_default();
 
     let runtime = BoxliteRuntime::new(BoxliteOptions {
-        home_dir: home,
+        home_dir: home.clone(),
         image_registries: registries,
     })
     .context("failed to open the BoxLite runtime")?;
@@ -77,6 +77,17 @@ pub async fn run(args: UpArgs) -> Result<()> {
         .create(options, Some(name.clone()))
         .await
         .context("failed to create the box")?;
+
+    // Best-effort, like the git bootstrap below: `cbox list` losing the
+    // origin column for this one box is far better than `cbox up` failing
+    // over a metadata write.
+    if let Err(e) = sidecar::write(&home, &flags.invocation_dir) {
+        eprintln!(
+            "cbox: warning: could not record this box's origin ({e}); \
+             `cbox list` won't show a directory for it."
+        );
+    }
+
     litebox.start().await.context("failed to start the box")?;
 
     if has_github {
