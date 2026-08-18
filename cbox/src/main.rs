@@ -1,3 +1,4 @@
+mod boxopts;
 mod config;
 mod env;
 mod naming;
