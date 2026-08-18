@@ -1,6 +1,7 @@
 mod config;
 mod env;
 mod naming;
+mod secrets;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
