@@ -73,6 +73,18 @@ fn set_and_non_empty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.is_empty())
 }
 
+/// Whether GitHub secret support should be requested at all. Built on the
+/// same `set_and_non_empty` predicate as `github_spec`/`build`, so it cannot
+/// drift from what those actually treat as usable: in particular,
+/// `GH_TOKEN=""` (e.g. a blank line in a sourced `.env`) must not count as
+/// present when `GITHUB_TOKEN` is also unset, or a caller that gates on this
+/// and then calls `build` unconditionally would abort on a spurious "unset or
+/// empty" error instead of silently skipping the secret, as having neither
+/// variable set at all does.
+pub fn has_github_token() -> bool {
+    set_and_non_empty("GH_TOKEN").is_some() || set_and_non_empty("GITHUB_TOKEN").is_some()
+}
+
 /// The GitHub preset. Its `name` is a marker: `build` expands it into the two
 /// secrets the two protocols need.
 pub fn github_spec() -> SecretSpec {
@@ -237,6 +249,24 @@ mod tests {
         assert_eq!(built.source_vars, vec!["CBOX_T_TOKEN".to_string()]);
         // The real value must never appear in what the guest receives.
         assert!(!built.env.iter().any(|(_, v)| v.contains("super-secret")));
+    }
+
+    /// `has_github_token` must agree with `github_spec`/`build` on what counts
+    /// as usable, or a caller gating on it can still hit `build`'s "unset or
+    /// empty" error. In particular `GH_TOKEN=""` with no `GITHUB_TOKEN` must
+    /// read as absent, exactly like having neither variable set at all — this
+    /// is the exact bug this function exists to prevent.
+    #[test]
+    fn has_github_token_treats_a_blank_gh_token_as_absent() {
+        unsafe { std::env::remove_var("GH_TOKEN") };
+        unsafe { std::env::remove_var("GITHUB_TOKEN") };
+        assert!(!has_github_token(), "both unset");
+
+        let _gh = EnvGuard::set("GH_TOKEN", "");
+        assert!(!has_github_token(), "GH_TOKEN=\"\" with GITHUB_TOKEN unset");
+
+        let _ghub = EnvGuard::set("GITHUB_TOKEN", "ghp_from_github_token");
+        assert!(has_github_token(), "GH_TOKEN=\"\" with a valid GITHUB_TOKEN");
     }
 
     #[test]

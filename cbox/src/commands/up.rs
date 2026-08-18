@@ -26,7 +26,7 @@ pub async fn run(args: UpArgs) -> Result<()> {
 
     // Secrets first: their source variables must be withheld from passthrough.
     let mut specs = Vec::new();
-    if std::env::var("GH_TOKEN").is_ok() || std::env::var("GITHUB_TOKEN").is_ok() {
+    if secrets::has_github_token() {
         specs.push(secrets::github_spec());
     }
     for flag in &args.secret_flags {
