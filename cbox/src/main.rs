@@ -1,3 +1,4 @@
+mod attach;
 mod boxopts;
 mod config;
 mod env;
