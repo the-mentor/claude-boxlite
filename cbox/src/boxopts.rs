@@ -17,21 +17,42 @@ pub struct UpFlags {
     pub invocation_dir: PathBuf,
 }
 
-/// `hostPath:boxPath[:ro]`
+/// `hostPath:boxPath[:ro|rw]`
 pub fn parse_volume(s: &str) -> Result<VolumeSpec> {
     let parts: Vec<&str> = s.split(':').collect();
     match parts.as_slice() {
-        [host, guest] => Ok(VolumeSpec {
-            host_path: (*host).to_string(),
-            guest_path: (*guest).to_string(),
-            read_only: false,
-        }),
-        [host, guest, opt] => Ok(VolumeSpec {
-            host_path: (*host).to_string(),
-            guest_path: (*guest).to_string(),
-            read_only: *opt == "ro",
-        }),
-        _ => bail!("-v needs hostPath:boxPath[:ro], got {s:?}"),
+        [host, guest] => {
+            if host.is_empty() {
+                bail!("-v: host path cannot be empty in {s:?}");
+            }
+            if guest.is_empty() {
+                bail!("-v: guest path cannot be empty in {s:?}");
+            }
+            Ok(VolumeSpec {
+                host_path: (*host).to_string(),
+                guest_path: (*guest).to_string(),
+                read_only: false,
+            })
+        }
+        [host, guest, opt] => {
+            if host.is_empty() {
+                bail!("-v: host path cannot be empty in {s:?}");
+            }
+            if guest.is_empty() {
+                bail!("-v: guest path cannot be empty in {s:?}");
+            }
+            let read_only = match *opt {
+                "ro" => true,
+                "rw" => false,
+                _ => bail!("-v: unrecognized mount option {opt:?} in {s:?}; use ro|rw"),
+            };
+            Ok(VolumeSpec {
+                host_path: (*host).to_string(),
+                guest_path: (*guest).to_string(),
+                read_only,
+            })
+        }
+        _ => bail!("-v needs hostPath:boxPath[:ro|rw], got {s:?}"),
     }
 }
 
@@ -98,6 +119,39 @@ mod tests {
     #[test]
     fn a_volume_without_a_colon_is_rejected() {
         assert!(parse_volume("/host").is_err());
+    }
+
+    #[test]
+    fn a_volume_with_four_parts_is_rejected() {
+        let err = parse_volume("/host:/box:ro:extra").unwrap_err().to_string();
+        assert!(err.contains("hostPath:boxPath[:ro|rw]"), "error should hint at format: {err}");
+    }
+
+    #[test]
+    fn an_empty_host_path_is_rejected() {
+        let err = parse_volume(":/box").unwrap_err().to_string();
+        assert!(err.contains("host path cannot be empty"), "error should name the problem: {err}");
+    }
+
+    #[test]
+    fn an_empty_guest_path_is_rejected() {
+        let err = parse_volume("/host:").unwrap_err().to_string();
+        assert!(err.contains("guest path cannot be empty"), "error should name the problem: {err}");
+    }
+
+    #[test]
+    fn an_unrecognized_mount_option_is_rejected() {
+        // :RO is a plausible typo that would silently produce a writable mount
+        // under the old implementation. It must be rejected.
+        let err = parse_volume("/host:/box:RO").unwrap_err().to_string();
+        assert!(err.contains("unrecognized mount option"), "error should name the problem: {err}");
+        assert!(err.contains("ro|rw"), "error should hint at valid options: {err}");
+    }
+
+    #[test]
+    fn rw_option_explicitly_sets_writable() {
+        let v = parse_volume("/host:/box:rw").unwrap();
+        assert!(!v.read_only, ":rw should produce a writable mount");
     }
 
     #[test]
