@@ -3,6 +3,7 @@ mod boxopts;
 mod config;
 mod env;
 mod naming;
+mod proto;
 mod secrets;
 
 use anyhow::{Context, Result};
