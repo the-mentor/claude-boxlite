@@ -19,6 +19,7 @@ pub struct UpArgs {
     pub secret_flags: Vec<String>,
     pub env_file: Option<PathBuf>,
     pub cmd: Vec<String>,
+    pub disk_size_gb: Option<u64>,
 }
 
 pub async fn run(args: UpArgs) -> Result<()> {
@@ -98,6 +99,7 @@ pub async fn run(args: UpArgs) -> Result<()> {
         volumes: args.volumes,
         cmd,
         invocation_dir: cwd,
+        disk_size_gb: args.disk_size_gb,
     };
     let options = boxopts::build(&flags, built.secrets, plain)?;
 

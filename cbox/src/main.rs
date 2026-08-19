@@ -50,6 +50,12 @@ enum Commands {
         /// $CBOX_ENV_FILE, then ~/.config/cbox/env.
         #[arg(long = "env-file")]
         env_file: Option<PathBuf>,
+        /// Container rootfs disk size in GB. The COW overlay is sparse and
+        /// grows with actual usage; the virtual size is max(this, base image
+        /// size), so smaller values are ignored. Defaults to 10GB, which
+        /// gives headroom for in-box docker pull/apt/npm/build caches.
+        #[arg(long = "disk-size")]
+        disk_size: Option<u64>,
         #[arg(last = true)]
         cmd: Vec<String>,
     },
@@ -82,10 +88,11 @@ async fn main() -> Result<()> {
         }
         Commands::Up {
             name, force, cwd_mount, volumes, env_flags, image, config, secret_flags, env_file, cmd,
+            disk_size,
         } => {
             commands::up::run(commands::up::UpArgs {
                 name, force, cwd_mount, volumes, env_flags, image, config, secret_flags, env_file,
-                cmd,
+                cmd, disk_size_gb: disk_size,
             })
             .await?;
         }

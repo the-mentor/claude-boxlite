@@ -6,8 +6,9 @@ use anyhow::{Result, bail};
 use boxlite::{BoxOptions, RootfsSpec, Secret};
 use boxlite::runtime::options::VolumeSpec;
 
-/// Disk size for a booted box. Not yet user-configurable (see the plan's
-/// "Out of scope" list for `--cpus`/`--memory`/`-u`-style flags).
+/// Default disk size for a booted box, used when `--disk-size` is absent.
+/// User-configurable via that flag (see `build` below); `--cpus`/`--memory`/
+/// `-u`-style flags remain out of scope per the plan.
 pub const DISK_SIZE_GB: u64 = 10;
 
 pub struct UpFlags {
@@ -16,6 +17,7 @@ pub struct UpFlags {
     pub volumes: Vec<String>,
     pub cmd: Vec<String>,
     pub invocation_dir: PathBuf,
+    pub disk_size_gb: Option<u64>,
 }
 
 /// `hostPath:boxPath[:ro|rw]`
@@ -74,12 +76,21 @@ pub fn build(
         volumes.push(parse_volume(v)?);
     }
 
+    // 0 is rejected here rather than passed through: BoxOptions silently
+    // ignores any value smaller than the base image, so `--disk-size 0`
+    // would look accepted but do nothing — worth a clear error instead of a
+    // quiet no-op. No upper bound: an absurdly large value is the user's
+    // problem (and boxlite/the host will fail loudly enough on it).
+    if flags.disk_size_gb == Some(0) {
+        bail!("--disk-size must be greater than 0");
+    }
+
     Ok(BoxOptions {
         rootfs: RootfsSpec::Image(flags.image.clone()),
         env,
         secrets,
         volumes,
-        disk_size_gb: Some(DISK_SIZE_GB),
+        disk_size_gb: Some(flags.disk_size_gb.unwrap_or(DISK_SIZE_GB)),
         working_dir: Some("/workspace".to_string()),
         cmd: Some(flags.cmd.clone()),
         // Mandatory. The SDK default (false) stops the box when the creating
@@ -106,6 +117,7 @@ mod tests {
             volumes: vec![],
             cmd: vec!["claude".into()],
             invocation_dir: PathBuf::from("/tmp/project"),
+            disk_size_gb: None,
         }
     }
 
@@ -183,6 +195,28 @@ mod tests {
         assert_eq!(opts.volumes.len(), 1);
         assert_eq!(opts.volumes[0].host_path, "/tmp/project");
         assert_eq!(opts.volumes[0].guest_path, "/workspace");
+    }
+
+    #[test]
+    fn absent_disk_size_flag_yields_the_default() {
+        let opts = build(&flags(), vec![], vec![]).unwrap();
+        assert_eq!(opts.disk_size_gb, Some(DISK_SIZE_GB));
+    }
+
+    #[test]
+    fn a_provided_disk_size_reaches_box_options() {
+        let mut f = flags();
+        f.disk_size_gb = Some(40);
+        let opts = build(&f, vec![], vec![]).unwrap();
+        assert_eq!(opts.disk_size_gb, Some(40));
+    }
+
+    #[test]
+    fn a_zero_disk_size_is_rejected() {
+        let mut f = flags();
+        f.disk_size_gb = Some(0);
+        let err = build(&f, vec![], vec![]).unwrap_err().to_string();
+        assert!(err.contains("--disk-size"), "error should name the flag: {err}");
     }
 
     #[test]
