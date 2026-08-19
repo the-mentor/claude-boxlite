@@ -82,7 +82,7 @@ pub async fn run(args: UpArgs) -> Result<()> {
     // other way, is not this function's business.
     if cmd.first().map(String::as_str) == Some("claude") && !env::any_anthropic_credential_set() {
         let looked = match &env_file_path {
-            Some(p) => format!("cbox looked for an env file at {}", p.display()),
+            Some(loc) => format!("cbox looked for an env file at {}", loc.path.display()),
             None => "cbox could not determine an env file location (no $HOME)".to_string(),
         };
         eprintln!(
