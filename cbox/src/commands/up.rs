@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use boxlite::{BoxCommand, BoxliteOptions, BoxliteRuntime, LiteBox};
 
-use crate::{attach, boxopts, config, env, naming, secrets, sidecar};
+use crate::{attach, boxopts, config, env, envfile, naming, secrets, sidecar};
 
 pub struct UpArgs {
     pub name: Option<String>,
@@ -17,6 +17,7 @@ pub struct UpArgs {
     pub image: String,
     pub config: Option<PathBuf>,
     pub secret_flags: Vec<String>,
+    pub env_file: Option<PathBuf>,
     pub cmd: Vec<String>,
 }
 
@@ -24,6 +25,15 @@ pub async fn run(args: UpArgs) -> Result<()> {
     let cwd = std::env::current_dir().context("cannot read current directory")?;
     let resolved = naming::resolve(args.name.as_deref(), &cwd);
     let name = resolved.name;
+
+    // Load the env file, if any, before anything below reads the process
+    // environment: passthrough selection, secret source lookup, and GitHub
+    // token detection all need to see whatever it provides. A variable
+    // already set in the real environment wins — this only fills gaps.
+    let env_file_path = envfile::resolve_path(args.env_file.as_deref());
+    if let Some(path) = &env_file_path {
+        envfile::apply(path);
+    }
 
     // Secrets first: their source variables must be withheld from passthrough.
     let mut specs = Vec::new();
@@ -36,8 +46,7 @@ pub async fn run(args: UpArgs) -> Result<()> {
     let built = secrets::build(&specs)?;
     let has_github = specs.iter().any(|s| s.name == "gh");
 
-    let passthrough: Vec<String> =
-        env::DEFAULT_PASSTHROUGH.iter().map(|s| s.to_string()).collect();
+    let passthrough = env::passthrough_vars();
     let mut plain = env::compose(&args.env_flags, &passthrough, &built.source_vars)?;
     plain.extend(built.env.clone());
     plain.push((
@@ -64,11 +73,30 @@ pub async fn run(args: UpArgs) -> Result<()> {
         let _ = runtime.remove(&name, true).await;
     }
 
+    let cmd = if args.cmd.is_empty() { vec!["claude".into()] } else { args.cmd };
+
+    // The one line that turns a multi-hour "why did Claude just exit"
+    // diagnosis into something visible immediately: warn, don't fail — the
+    // user launching a non-`claude` command, or one that authenticates some
+    // other way, is not this function's business.
+    if cmd.first().map(String::as_str) == Some("claude") && !env::any_anthropic_credential_set() {
+        let looked = match &env_file_path {
+            Some(p) => format!("cbox looked for an env file at {}", p.display()),
+            None => "cbox could not determine an env file location (no $HOME)".to_string(),
+        };
+        eprintln!(
+            "cbox: warning: no Anthropic credential found (checked ANTHROPIC_API_KEY, \
+             ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CLAUDE_CODE_OAUTH_TOKEN). \
+             Claude will not be able to authenticate. {looked} \
+             (override with --env-file or $CBOX_ENV_FILE)."
+        );
+    }
+
     let flags = boxopts::UpFlags {
         image: args.image,
         cwd_mount: args.cwd_mount,
         volumes: args.volumes,
-        cmd: if args.cmd.is_empty() { vec!["claude".into()] } else { args.cmd },
+        cmd,
         invocation_dir: cwd,
     };
     let options = boxopts::build(&flags, built.secrets, plain)?;

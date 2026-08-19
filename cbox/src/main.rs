@@ -4,6 +4,7 @@ mod client;
 mod commands;
 mod config;
 mod env;
+mod envfile;
 mod naming;
 mod proto;
 mod secrets;
@@ -44,6 +45,10 @@ enum Commands {
         /// NAME=ENV_VAR@host[,host...]
         #[arg(long = "secret")]
         secret_flags: Vec<String>,
+        /// KEY=VALUE file to load before resolving credentials. Defaults to
+        /// $CBOX_ENV_FILE, then ~/.config/cbox/env.
+        #[arg(long = "env-file")]
+        env_file: Option<PathBuf>,
         #[arg(last = true)]
         cmd: Vec<String>,
     },
@@ -75,10 +80,11 @@ async fn main() -> Result<()> {
             println!("{}  (derived: {})", resolved.name, resolved.source.describe());
         }
         Commands::Up {
-            name, force, cwd_mount, volumes, env_flags, image, config, secret_flags, cmd,
+            name, force, cwd_mount, volumes, env_flags, image, config, secret_flags, env_file, cmd,
         } => {
             commands::up::run(commands::up::UpArgs {
-                name, force, cwd_mount, volumes, env_flags, image, config, secret_flags, cmd,
+                name, force, cwd_mount, volumes, env_flags, image, config, secret_flags, env_file,
+                cmd,
             })
             .await?;
         }

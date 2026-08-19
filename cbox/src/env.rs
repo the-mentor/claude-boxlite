@@ -14,14 +14,11 @@
 
 use anyhow::{Result, anyhow, bail};
 
-/// Forwarded when set. Deliberately excludes GH_TOKEN/GITHUB_TOKEN, which
-/// phase 1 moves to secrets, and TERM, which needs a guaranteed value and is
-/// injected explicitly.
-pub const DEFAULT_PASSTHROUGH: &[&str] = &[
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_AUTH_TOKEN",
+/// Forwarded unconditionally when set. Deliberately excludes
+/// GH_TOKEN/GITHUB_TOKEN, which phase 1 moves to secrets, and TERM, which
+/// needs a guaranteed value and is injected explicitly.
+const UNCONDITIONAL_PASSTHROUGH: &[&str] = &[
     "ANTHROPIC_MODEL",
-    "CLAUDE_CODE_OAUTH_TOKEN",
     "GIT_AUTHOR_NAME",
     "GIT_AUTHOR_EMAIL",
     "GIT_COMMITTER_NAME",
@@ -35,6 +32,51 @@ pub const DEFAULT_PASSTHROUGH: &[&str] = &[
     "WT_SESSION",
     "VTE_VERSION",
 ];
+
+fn is_set_and_non_empty(key: &str) -> bool {
+    std::env::var(key).map(|v| !v.is_empty()).unwrap_or(false)
+}
+
+/// Which Anthropic auth vars to forward, mirroring the justfile's `llm_vars`
+/// conditional (justfile:27-33) rather than a flat union. A subscription
+/// OAuth token wins and travels with ANTHROPIC_BASE_URL if one is set (the
+/// `/claude` passthrough route on the gateway) or goes direct if not.
+/// Otherwise a set ANTHROPIC_BASE_URL means keyed-gateway mode via `/api`,
+/// where the real API key must deliberately stay host-side — the gateway
+/// injects it from its own environment, so ANTHROPIC_API_KEY is absent from
+/// this branch's output on purpose, not by omission. Only when neither is
+/// set (talking to the Anthropic API directly, no gateway involved) does the
+/// raw key get forwarded.
+fn llm_passthrough() -> Vec<&'static str> {
+    if is_set_and_non_empty("CLAUDE_CODE_OAUTH_TOKEN") {
+        vec!["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL"]
+    } else if is_set_and_non_empty("ANTHROPIC_BASE_URL") {
+        vec!["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
+    } else {
+        vec!["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+    }
+}
+
+/// The full passthrough list for this run: the LLM-auth branch selected by
+/// what's currently set, plus the unconditional model/git/terminal vars.
+/// Recomputed per call (not a `const`) because the LLM branch depends on the
+/// live environment, which an env-file load can change between calls.
+pub fn passthrough_vars() -> Vec<String> {
+    llm_passthrough()
+        .into_iter()
+        .chain(UNCONDITIONAL_PASSTHROUGH.iter().copied())
+        .map(String::from)
+        .collect()
+}
+
+/// Whether any variable that could authenticate Claude against Anthropic is
+/// present. Used only to decide whether to print the missing-credential
+/// warning — never logged or otherwise surfaced itself.
+pub fn any_anthropic_credential_set() -> bool {
+    ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"]
+        .iter()
+        .any(|k| is_set_and_non_empty(k))
+}
 
 /// `KEY=VALUE` → (KEY, Some(VALUE)); bare `KEY` → (KEY, None).
 pub fn parse_e_flag(s: &str) -> Result<(String, Option<String>)> {
@@ -94,7 +136,19 @@ pub fn compose(
 
 #[cfg(test)]
 mod tests {
-    use super::{compose, parse_e_flag};
+    use super::{any_anthropic_credential_set, compose, parse_e_flag, passthrough_vars};
+    use crate::test_env_lock::EnvVarGuard;
+
+    /// Clears the three vars the conditional branches on, so each test below
+    /// starts from a known "nothing set" baseline regardless of run order or
+    /// the outer process's real environment.
+    fn clear_llm_vars() -> (EnvVarGuard, EnvVarGuard, EnvVarGuard) {
+        (
+            EnvVarGuard::remove("CLAUDE_CODE_OAUTH_TOKEN"),
+            EnvVarGuard::remove("ANTHROPIC_BASE_URL"),
+            EnvVarGuard::remove("ANTHROPIC_API_KEY"),
+        )
+    }
 
     #[test]
     fn parses_key_value_and_bare_key() {
@@ -165,5 +219,73 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("CBOX_T_SECRET2"), "error names the variable: {err}");
+    }
+
+    #[test]
+    fn oauth_branch_forwards_the_oauth_token_and_base_url_only() {
+        let _lock = crate::test_env_lock::lock();
+        let _cleared = clear_llm_vars();
+        let _oauth = EnvVarGuard::set("CLAUDE_CODE_OAUTH_TOKEN", "oauth-tok");
+        let _base = EnvVarGuard::set("ANTHROPIC_BASE_URL", "http://gw");
+
+        let vars = passthrough_vars();
+        assert!(vars.contains(&"CLAUDE_CODE_OAUTH_TOKEN".to_string()));
+        assert!(vars.contains(&"ANTHROPIC_BASE_URL".to_string()));
+        assert!(!vars.contains(&"ANTHROPIC_API_KEY".to_string()));
+        assert!(!vars.contains(&"ANTHROPIC_AUTH_TOKEN".to_string()));
+    }
+
+    /// The middle branch is the one the whole conditional exists to protect:
+    /// in keyed-gateway mode (ANTHROPIC_BASE_URL set, no OAuth token) the real
+    /// API key must stay host-side for the gateway to inject — a flat union
+    /// that always forwarded ANTHROPIC_API_KEY would destroy that property
+    /// silently, with no error and no visible symptom until someone inspected
+    /// the box's environment.
+    #[test]
+    fn base_url_branch_withholds_the_raw_api_key() {
+        let _lock = crate::test_env_lock::lock();
+        let _cleared = clear_llm_vars();
+        let _base = EnvVarGuard::set("ANTHROPIC_BASE_URL", "http://gw");
+
+        let vars = passthrough_vars();
+        assert!(vars.contains(&"ANTHROPIC_AUTH_TOKEN".to_string()));
+        assert!(vars.contains(&"ANTHROPIC_BASE_URL".to_string()));
+        assert!(
+            !vars.contains(&"ANTHROPIC_API_KEY".to_string()),
+            "keyed-gateway mode must not forward the real API key: {vars:?}"
+        );
+        assert!(!vars.contains(&"CLAUDE_CODE_OAUTH_TOKEN".to_string()));
+    }
+
+    #[test]
+    fn direct_branch_forwards_the_api_key_when_neither_gateway_var_is_set() {
+        let _lock = crate::test_env_lock::lock();
+        let _cleared = clear_llm_vars();
+
+        let vars = passthrough_vars();
+        assert!(vars.contains(&"ANTHROPIC_API_KEY".to_string()));
+        assert!(vars.contains(&"ANTHROPIC_AUTH_TOKEN".to_string()));
+        assert!(!vars.contains(&"ANTHROPIC_BASE_URL".to_string()));
+        assert!(!vars.contains(&"CLAUDE_CODE_OAUTH_TOKEN".to_string()));
+    }
+
+    #[test]
+    fn unconditional_vars_are_present_in_every_branch() {
+        let _lock = crate::test_env_lock::lock();
+        let _cleared = clear_llm_vars();
+        let vars = passthrough_vars();
+        assert!(vars.contains(&"ANTHROPIC_MODEL".to_string()));
+        assert!(vars.contains(&"GIT_AUTHOR_NAME".to_string()));
+    }
+
+    #[test]
+    fn no_credential_set_is_detected_for_the_warning() {
+        let _lock = crate::test_env_lock::lock();
+        let _cleared = clear_llm_vars();
+        let _auth = EnvVarGuard::remove("ANTHROPIC_AUTH_TOKEN");
+        assert!(!any_anthropic_credential_set());
+
+        let _key = EnvVarGuard::set("ANTHROPIC_API_KEY", "sk-something");
+        assert!(any_anthropic_credential_set());
     }
 }
