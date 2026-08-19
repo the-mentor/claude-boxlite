@@ -34,7 +34,11 @@ pub async fn run(name: Option<String>, cmd: Vec<String>) -> Result<()> {
                 .get(&resolved.name)
                 .await?
                 .with_context(|| format!("no box named {}", resolved.name))?;
-            attach::attach(&litebox, &cmd).await
+            let code = attach::attach(&litebox, &cmd).await?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
         }
     }
 }

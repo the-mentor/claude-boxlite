@@ -42,7 +42,7 @@ pub async fn run(args: UpArgs) -> Result<()> {
     plain.extend(built.env.clone());
     plain.push((
         "TERM".into(),
-        std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".into()),
+        std::env::var("TERM").unwrap_or_else(|_| attach::DEFAULT_TERM.into()),
     ));
     plain.push(("BOX_NAME".into(), name.clone()));
 
@@ -113,7 +113,11 @@ pub async fn run(args: UpArgs) -> Result<()> {
     // client also handles a stale socket.
     server.abort();
     let _ = std::fs::remove_file(crate::server::socket_path(&home_for_socket));
-    result
+    // `up`'s own exit status doesn't reflect the attached command's exit code
+    // today (only `cbox exec` propagates that, via `commands/exec.rs`) — this
+    // task didn't touch that, so keep dropping it here rather than changing
+    // what `cbox up` reports to the shell.
+    result.map(|_code| ())
 }
 
 /// Point git at the pre-encoded secret so GitHub operations authenticate.

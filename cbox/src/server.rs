@@ -65,10 +65,35 @@ fn validate_cmd(cmd: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Run one exec session, then guarantee the client sees an `Exit` frame no
+/// matter how the session ended.
+///
+/// `handle_session`'s own success path already writes a real `Frame::Exit`
+/// (from `exec.wait()`) before returning `Ok`. Every early-return path inside
+/// it (`?` on setup, `bail!` on a malformed first frame, an empty `cmd`, a
+/// missing stdout/stdin) skips straight past that write. Left alone, the
+/// connection just closes — which `proxy_loop` on the client (`client.rs`)
+/// reads as a clean EOF and reports as exit code 0, turning a failure to even
+/// start the exec into a reported success. Catching every `Err` here once,
+/// rather than adding a frame write at each early-return site, is what
+/// guarantees that.
 async fn handle(stream: UnixStream, litebox: Arc<LiteBox>) -> Result<()> {
     let (mut reader, mut writer) = stream.into_split();
+    let result = handle_session(&mut reader, &mut writer, litebox).await;
+    if result.is_err() {
+        let _ =
+            write_frame(&mut writer, &Frame::Exit { code: crate::proto::EXIT_CODE_SESSION_FAILED })
+                .await;
+    }
+    result
+}
 
-    let Some(Frame::Exec(req)) = read_frame(&mut reader).await? else {
+async fn handle_session(
+    reader: &mut tokio::net::unix::OwnedReadHalf,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    litebox: Arc<LiteBox>,
+) -> Result<()> {
+    let Some(Frame::Exec(req)) = read_frame(reader).await? else {
         anyhow::bail!("first frame was not Exec");
     };
 
@@ -134,7 +159,7 @@ async fn handle(stream: UnixStream, litebox: Arc<LiteBox>) -> Result<()> {
         tokio::select! {
             chunk = out.next() => match chunk {
                 Some(text) => {
-                    if write_frame(&mut writer, &Frame::Stdout(text.into_bytes())).await.is_err() {
+                    if write_frame(writer, &Frame::Stdout(text.into_bytes())).await.is_err() {
                         // The client is no longer reachable.
                         client_gone = true;
                         break;
@@ -142,7 +167,7 @@ async fn handle(stream: UnixStream, litebox: Arc<LiteBox>) -> Result<()> {
                 }
                 None => break, // guest process's stdout closed on its own
             },
-            frame = read_frame(&mut reader) => match frame {
+            frame = read_frame(reader) => match frame {
                 Ok(Some(Frame::Stdin(bytes))) => {
                     if stdin_writer.write(&bytes).await.is_err() {
                         break;
@@ -173,7 +198,7 @@ async fn handle(stream: UnixStream, litebox: Arc<LiteBox>) -> Result<()> {
     }
 
     let code = exec.wait().await.map(|r| r.code()).unwrap_or(0);
-    let _ = write_frame(&mut writer, &Frame::Exit { code }).await;
+    let _ = write_frame(writer, &Frame::Exit { code }).await;
     Ok(())
 }
 

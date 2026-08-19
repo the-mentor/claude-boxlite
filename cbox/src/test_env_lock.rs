@@ -21,3 +21,41 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 pub fn lock() -> MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
+
+/// Snapshot-and-restore guard for a single env var used in tests, panic-safe
+/// via `Drop`. Captures whatever the var held (set or unset) when created and
+/// puts it back exactly on drop — including when the test body panics before
+/// reaching its own cleanup, so one failing test can't leak env state into
+/// whichever test runs after it.
+///
+/// Callers must hold `lock()` for the guard's whole lifetime; this only
+/// handles restoration, not cross-test serialization.
+pub struct EnvVarGuard {
+    key: &'static str,
+    original: Option<String>,
+}
+
+impl EnvVarGuard {
+    /// Snapshot the current value, then set the var to `value`.
+    pub fn set(key: &'static str, value: &str) -> Self {
+        let original = std::env::var(key).ok();
+        unsafe { std::env::set_var(key, value) };
+        Self { key, original }
+    }
+
+    /// Snapshot the current value, then remove the var.
+    pub fn remove(key: &'static str) -> Self {
+        let original = std::env::var(key).ok();
+        unsafe { std::env::remove_var(key) };
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(v) => unsafe { std::env::set_var(self.key, v) },
+            None => unsafe { std::env::remove_var(self.key) },
+        }
+    }
+}

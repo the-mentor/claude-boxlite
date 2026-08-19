@@ -167,31 +167,11 @@ pub fn git_bootstrap_script() -> String {
 mod tests {
     use super::*;
 
-    /// Panic-safe env var mutation for tests. A bare `set_var` with no
-    /// matching `remove_var` leaks into every test that runs afterward if
-    /// the test panics before reaching its own cleanup. Binding the guard to
-    /// `_` still drops it immediately, so every call site must bind it to a
-    /// named local.
-    ///
-    /// Callers must hold `crate::test_env_lock::lock()` for the duration of
-    /// the test (see each test's own `let _lock = ...` at the top) — this
-    /// guard only handles cleanup-on-panic, not cross-test serialization.
-    struct EnvGuard {
-        key: &'static str,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            unsafe { std::env::set_var(key, value) };
-            Self { key }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            unsafe { std::env::remove_var(self.key) };
-        }
-    }
+    // Panic-safe env var mutation for tests lives in `test_env_lock`, shared
+    // with every other module whose tests touch the environment. Binding the
+    // guard to `_` still drops it immediately, so every call site below
+    // binds it to a named local.
+    use crate::test_env_lock::EnvVarGuard as EnvGuard;
 
     #[test]
     fn placeholder_matches_the_python_binding_format() {

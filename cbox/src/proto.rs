@@ -11,6 +11,15 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// Refuse absurd frames rather than allocating on a corrupt length.
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 
+/// Sentinel `Frame::Exit` code the server sends when a session ends *without*
+/// ever reaching a real guest exit status (e.g. `exec` setup failed, or the
+/// connection was torn down before `exec.wait()`). Not a genuine process exit
+/// code — those come from `boxlite`'s `ExecResult::code()`, reflecting an
+/// actual guest exit. Distinguishing this from a bare, silent stream close is
+/// the point: without an explicit `Exit` frame, the client reads a closed
+/// connection as clean EOF and reports the whole session as exit code 0.
+pub const EXIT_CODE_SESSION_FAILED: i32 = -1;
+
 const TAG_EXEC: u8 = 0;
 const TAG_STDIN: u8 = 1;
 const TAG_RESIZE: u8 = 2;
