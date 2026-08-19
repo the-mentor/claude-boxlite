@@ -18,7 +18,15 @@ pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 /// actual guest exit. Distinguishing this from a bare, silent stream close is
 /// the point: without an explicit `Exit` frame, the client reads a closed
 /// connection as clean EOF and reports the whole session as exit code 0.
-pub const EXIT_CODE_SESSION_FAILED: i32 = -1;
+///
+/// Deliberately `i32::MIN`, not `-1`: `boxlite-0.9.7`'s
+/// `litebox/exec.rs::map_wait_response` computes `code = -resp.signal` when
+/// the guest was killed by a signal, so a guest killed by SIGHUP (signal 1)
+/// legitimately returns exactly `-1` -- and `rest/litebox.rs` separately uses
+/// `-1` as its own "unknown" placeholder. Either would collide with `-1` here
+/// and print the "session failed" explanation for a real result. No signal
+/// number or POSIX exit code can ever reach `i32::MIN`.
+pub const EXIT_CODE_SESSION_FAILED: i32 = i32::MIN;
 
 const TAG_EXEC: u8 = 0;
 const TAG_STDIN: u8 = 1;

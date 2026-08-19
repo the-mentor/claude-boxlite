@@ -12,6 +12,7 @@ mod server;
 mod sidecar;
 #[cfg(test)]
 mod test_env_lock;
+mod terminal_guard;
 
 use std::path::PathBuf;
 

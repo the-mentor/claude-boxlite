@@ -37,10 +37,14 @@ pub async fn attach(litebox: &LiteBox, cmd: &[String]) -> Result<i32> {
     let stdin_writer = exec.stdin().context("no stdin on the interactive exec")?;
     let exec = Arc::new(exec);
 
-    crossterm::terminal::enable_raw_mode()?;
-    let result = pump(exec, out_stream, stdin_writer).await;
-    crossterm::terminal::disable_raw_mode()?;
-    result
+    // Guards raw mode plus every guest-set terminal escape mode (bracketed
+    // paste, modifyOtherKeys, alternate screen, mouse capture, cursor
+    // visibility) and restores them all on drop -- clean return, an early
+    // `?` below, or a panic unwinding through `pump`. A plain
+    // `disable_raw_mode()` call after `pump` (the previous approach) only
+    // undoes termios state and is skipped entirely on a panic.
+    let _terminal_guard = crate::terminal_guard::TerminalGuard::enable()?;
+    pump(exec, out_stream, stdin_writer).await
 }
 
 async fn pump(
@@ -60,7 +64,21 @@ async fn pump(
     // the guest may still be running — waiting on it here could hang this
     // command forever. Mirrors `server.rs`'s `client_gone` flag, which draws
     // the same distinction for the same reason on the other end of the pipe.
-    let mut guest_exited = false;
+    //
+    // `out_stream` returning `None` is the only exit that's a genuine,
+    // silent success: it's a direct wrapper around a tokio mpsc receiver
+    // (`boxlite`'s `ExecStdout::poll_next` is a bare `self.receiver.poll_recv`),
+    // and tokio's mpsc guarantees a receiver yields every buffered message
+    // before it ever returns `None` -- so nothing the guest wrote is lost by
+    // the time this loop stops reading it. The other two exits below abandon
+    // the session for a local-side reason instead, which is exactly what a
+    // silent `Ok(0)` used to hide from the user.
+    enum EndReason {
+        GuestExited,
+        LocalStdinClosed,
+        StdinWriteFailed,
+    }
+    let end_reason;
 
     loop {
         tokio::select! {
@@ -70,15 +88,17 @@ async fn pump(
                     stdout.write_all(text.as_bytes())?;
                     stdout.flush()?;
                 }
-                None => { guest_exited = true; break; } // guest exited
+                None => { end_reason = EndReason::GuestExited; break; }
             },
             read = stdin.read(&mut buf) => {
                 let n = read?;
                 if n == 0 {
-                    break; // local stdin closed; the guest may still be running
+                    end_reason = EndReason::LocalStdinClosed;
+                    break;
                 }
                 if stdin_writer.write(&buf[..n]).await.is_err() {
-                    break; // write failed; the guest's exit status isn't ours to wait on here
+                    end_reason = EndReason::StdinWriteFailed;
+                    break;
                 }
             }
             _ = sigwinch.recv() => {
@@ -89,10 +109,18 @@ async fn pump(
         }
     }
 
-    if guest_exited {
-        let result = exec.wait().await.context("waiting on the exec after the guest exited")?;
-        Ok(result.code())
-    } else {
-        Ok(0)
+    match end_reason {
+        EndReason::GuestExited => {
+            let result = exec.wait().await.context("waiting on the exec after the guest exited")?;
+            Ok(result.code())
+        }
+        EndReason::LocalStdinClosed => {
+            eprintln!("cbox: local stdin closed; the guest session may still be running detached");
+            Ok(1)
+        }
+        EndReason::StdinWriteFailed => {
+            eprintln!("cbox: failed to write to the guest's stdin; the guest session may still be running detached");
+            Ok(1)
+        }
     }
 }

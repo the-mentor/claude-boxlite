@@ -142,10 +142,14 @@ pub async fn proxy(stream: UnixStream, cmd: &[String]) -> Result<i32> {
     )
     .await?;
 
-    crossterm::terminal::enable_raw_mode()?;
-    let result = proxy_loop(&mut reader, &mut writer).await;
-    crossterm::terminal::disable_raw_mode()?;
-    result
+    // See `attach.rs` for why this needs to be a guard rather than a
+    // `disable_raw_mode()` call after `proxy_loop`: the guest inside the box
+    // can leave terminal modes (bracketed paste, modifyOtherKeys, alternate
+    // screen, mouse capture, cursor visibility) set via escape sequences that
+    // termios-level raw mode restoration doesn't touch, and a manual call
+    // after the pump is skipped entirely on a panic or an early `?`.
+    let _terminal_guard = crate::terminal_guard::TerminalGuard::enable()?;
+    proxy_loop(&mut reader, &mut writer).await
 }
 
 async fn proxy_loop(
@@ -176,12 +180,26 @@ async fn proxy_loop(
                     return Ok(code);
                 }
                 Some(_) => {}
-                None => return Ok(0),
+                None => {
+                    // `server.rs`'s `handle` guarantees a `Frame::Exit` is
+                    // written before the connection closes on every path, so
+                    // reaching a clean close without one first is itself an
+                    // anomaly (e.g. the server process died) rather than a
+                    // normal end of session -- it must not read as success.
+                    eprintln!(
+                        "cbox: control socket closed without an exit status; \
+                         the guest session may still be running detached"
+                    );
+                    return Ok(1);
+                }
             },
             read = stdin.read(&mut buf) => {
                 let n = read?;
                 if n == 0 {
-                    return Ok(0);
+                    eprintln!(
+                        "cbox: local stdin closed; the guest session may still be running detached"
+                    );
+                    return Ok(1);
                 }
                 write_frame(writer, &Frame::Stdin(buf[..n].to_vec())).await?;
             }
