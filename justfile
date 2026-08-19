@@ -4,34 +4,6 @@ base_tag   := "claude-boxlite-base"
 custom_tag := "claude-boxlite-custom"
 registry   := "localhost:5551"
 box_name   := "claude-box"
-disk_size  := "10"
-# Env vars passed into the box when set (in .env via dotenv-load, or the host
-# env). Unset ones are skipped — there's no way to fall back to a default here,
-# which is why TERM itself is NOT in this list (see the "TERM=..." flag on the
-# `boxlite run`/`exec` invocations below): TERM needs a guaranteed value
-# (defaults to xterm-256color) so the box always renders in color even when
-# the host's TERM is unset. Add a var here to make it available in the box.
-#
-# The TERM_PROGRAM/... group below identifies the actual terminal emulator
-# (TERM alone is often just "xterm-256color" for all of them). Claude Code
-# uses TERM_PROGRAM to decide whether to enable the Kitty keyboard protocol,
-# which is what lets a terminal tell Shift+Enter apart from plain Enter —
-# without it, Shift+Enter silently behaves like Enter inside the box even in
-# terminals (iTerm2, WezTerm, Warp) where it works fine outside the box.
-#
-# Which LLM auth vars reach the box. Precedence: a subscription OAuth token wins
-# and travels with ANTHROPIC_BASE_URL if one is set (the /claude passthrough
-# route), or goes direct if not. Otherwise a set ANTHROPIC_BASE_URL means keyed
-# gateway mode via /api, and the real API key deliberately stays on the host —
-# note it is absent from that branch. That absence is the whole point.
-llm_vars := if env_var_or_default("CLAUDE_CODE_OAUTH_TOKEN", "") != "" {
-    "CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_BASE_URL"
-  } else if env_var_or_default("ANTHROPIC_BASE_URL", "") != "" {
-    "ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL"
-  } else {
-    "ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN"
-  }
-passthrough_vars := llm_vars + " ANTHROPIC_MODEL GH_TOKEN GITHUB_TOKEN GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM KITTY_WINDOW_ID WEZTERM_EXECUTABLE ITERM_SESSION_ID WT_SESSION VTE_VERSION"
 compose    := "docker compose -f local-development/registry/docker-compose.yml"
 gateway    := "docker compose -f agentgateway/docker-compose.yml"
 
@@ -206,6 +178,10 @@ build-image *args: (build-base args) registry-up
 # Usage: just build [docker-build-args...]
 build *args: (build-image args)
 
+# Build the cbox binary. Requires protoc >= 3.12 (brew install protobuf).
+build-cbox:
+    cd cbox && cargo build --release
+
 # Refresh the custom image and sweep orphaned image blobs from boxlite's cache.
 # BoxLite caches image tags immutably and has no `rmi`, so a rebuilt :latest is
 # ignored until its cached tag->digest row is dropped; then the next
@@ -242,111 +218,59 @@ clean-cache:
       rm -f "$keep"
     done
 
-# Build images, then boot the box and launch Claude Code.
-# Pass -f/--force to replace an existing box of the same name.
-# Usage: just up-dev [box-name] [-f|--force] [-c|--cwd] [-v host:box ...] [-e KEY=VALUE ...] [-i image] [-V]
-up-dev *args=box_name: build (up args)
+# Build images and the cbox binary, then boot the box and launch Claude Code.
+# Usage: just up-dev [box-name] [-f] [-c] [-v host:box ...] [-e KEY[=VALUE] ...] [-i image] [-- cmd...]
+up-dev *args=box_name: build build-cbox (up args)
 
-# Boot the box and launch Claude Code (assumes images are already built).
-# Pass -f/--force to replace an existing box of the same name (boxlite run has no --force).
-# Pass -c/--cwd to mount the host current directory onto /workspace.
-# Pass -v/--volume host:box (repeatable) to mount a host folder into the box.
-# Pass -e/--env KEY=VALUE (repeatable) to inject an extra environment variable into the box.
-# Pass -i/--image to override the image path booted (default: custom_tag, i.e. claude-boxlite-custom).
-# Pass -V/--verbose to print the `boxlite run` command before executing it.
-# Pass -- <cmd> to override the executable launched in the box (default: claude).
-# Usage: just up [box-name] [-f|--force] [-c|--cwd] [-v host:box ...] [-e KEY=VALUE ...] [-i image] [-V] [-- cmd...]
+cbox_bin := justfile_directory() + "/cbox/target/release/cbox"
+
+# Boot the box and launch Claude Code.
+# Usage: just up [box-name] [-f] [-c] [-v host:box ...] [-e KEY[=VALUE] ...] [-i image] [-- cmd...]
 #
-# Each box name gets its own BOXLITE_HOME (${BOXLITE_HOME:-$HOME/.boxlite}/boxes/<name>).
-# boxlite takes an exclusive lock on the whole BOXLITE_HOME directory for as long as a
-# `boxlite run`/`exec` process is attached to it (not just on the one box), so two boxes
-# sharing a home can't run at once. Splitting the home per box name is what lets
-# `just up box-a` and `just up box-b` run concurrently. (A shared `boxlite serve` daemon
-# would avoid the per-process lock entirely, but its REST API doesn't yet forward
-# `-v`/`-c` bind mounts to the box - boxlite-ai/boxlite#942 - so it can't replace this
-# yet.) Each box name pays for its own image cache under its home dir; `just clean-cache`
-# sweeps all of them.
-up *args=box_name:
+# The `cd` is load-bearing: `just` sets the working directory to the justfile's
+# own directory, so without it cbox would always see the repo root as its cwd
+# and every derived box name would resolve to "claude-boxlite" no matter where
+# the user was standing. Because the cd makes the path relative to the user
+# instead, --config has to be passed explicitly.
+up *args:
     #!/usr/bin/env sh
     set -eu
-    set -- {{args}}
-    name={{box_name}}; force=""; vols=""; exec_cmd="claude"; extra_envflags=""; image="{{custom_tag}}"; verbose=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --) shift; exec_cmd="$*"; break ;;
-        -f|--force) force=1 ;;
-        -c|--cwd) vols="$vols -v {{invocation_directory()}}:/workspace" ;;
-        -v|--volume) shift; vols="$vols -v $1" ;;
-        -e|--env) shift; extra_envflags="$extra_envflags -e $1" ;;
-        -i|--image) shift; image="$1" ;;
-        -V|--verbose) verbose=1 ;;
-        -*) echo "unknown option: $1" >&2; exit 2 ;;
-        *) name="$1" ;;
-      esac
-      shift
-    done
-    home="${BOXLITE_HOME:-$HOME/.boxlite}/boxes/$name"
-    [ -n "$force" ] && boxlite --home "$home" rm -f "$name" 2>/dev/null || true
-    [ -f registries.local.json ] || cp registries.json registries.local.json
-    envflags=""
-    for v in {{passthrough_vars}}; do
-      eval "val=\${$v:-}"
-      [ -n "$val" ] && envflags="$envflags -e $v"
-    done
-    envflags="$envflags$extra_envflags"
-    cmd="boxlite --home \"$home\" run -it --name \"$name\" --disk-size {{disk_size}} $vols --config registries.local.json -w /workspace $envflags -e \"TERM=${TERM:-xterm-256color}\" -e \"BOX_NAME=$name\" \"$image\" -- $exec_cmd"
-    [ -n "$verbose" ] && echo "+ $cmd" >&2
-    eval "$cmd"
-
-# List running boxes across every box-name home under ${BOXLITE_HOME:-$HOME/.boxlite}/boxes.
-# Usage: just list [args...]
-list *args:
-    #!/usr/bin/env sh
-    set -eu
-    root="${BOXLITE_HOME:-$HOME/.boxlite}/boxes"
-    [ -d "$root" ] || exit 0
-    for dir in "$root"/*/; do
-      [ -d "$dir" ] || continue
-      echo "== $(basename "$dir") =="
-      boxlite --home "$dir" list {{args}}
-    done
+    [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' first" >&2; exit 1; }
+    # First-run bootstrap. This lived in the old `up` recipe; it has to stay
+    # here rather than move into cbox, because cbox's cwd is now the user's
+    # directory and it has no other way to find the repo's tracked template.
+    [ -f "{{justfile_directory()}}/registries.local.json" ] || \
+      cp "{{justfile_directory()}}/registries.json" \
+         "{{justfile_directory()}}/registries.local.json"
+    cd "{{invocation_directory()}}"
+    exec "{{cbox_bin}}" up \
+      --config "{{justfile_directory()}}/registries.local.json" {{args}}
 
 # Open a session in the running box.
-# Pass -- <cmd> to override the executable launched in the box (default: claude --continue).
-# Note: `boxlite exec` also opens its own local runtime and takes the same per-home lock
-# as `boxlite run`, so this only succeeds once that lock is free - i.e. once the `just up`
-# session for this box has exited (this was already true before per-box homes; it's a
-# limitation of the boxlite CLI's process model, not something this recipe adds).
-# `shell` is an alias for this recipe.
 # Usage: just exec [box-name] [-- cmd...]
 # Usage: just shell [box-name] [-- cmd...]
 alias shell := exec
-exec *args=box_name:
+exec *args:
     #!/usr/bin/env sh
     set -eu
-    set -- {{args}}
-    name={{box_name}}; exec_cmd="claude --continue"
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --) shift; exec_cmd="$*"; break ;;
-        -*) echo "unknown option: $1" >&2; exit 2 ;;
-        *) name="$1" ;;
-      esac
-      shift
-    done
-    home="${BOXLITE_HOME:-$HOME/.boxlite}/boxes/$name"
-    envflags=""
-    for v in {{passthrough_vars}}; do
-      eval "val=\${$v:-}"
-      [ -n "$val" ] && envflags="$envflags -e $v"
-    done
-    boxlite --home "$home" exec -it --config registries.local.json -w /workspace $envflags -e "TERM=${TERM:-xterm-256color}" -e "BOX_NAME=$name" "$name" -- $exec_cmd
+    [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' first" >&2; exit 1; }
+    cd "{{invocation_directory()}}"
+    exec "{{cbox_bin}}" exec {{args}}
 
-# Stop and remove the box
+# Stop and remove the box.
 # Usage: just down [box-name]
-down name=box_name:
+down *args:
     #!/usr/bin/env sh
     set -eu
-    home="${BOXLITE_HOME:-$HOME/.boxlite}/boxes/{{name}}"
-    boxlite --home "$home" stop {{name}} || true
-    boxlite --home "$home" rm {{name}} || true
+    [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' first" >&2; exit 1; }
+    cd "{{invocation_directory()}}"
+    exec "{{cbox_bin}}" down {{args}}
+
+# List boxes across every per-name home.
+# Usage: just list [-a]
+list *args:
+    #!/usr/bin/env sh
+    set -eu
+    [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' first" >&2; exit 1; }
+    cd "{{invocation_directory()}}"
+    exec "{{cbox_bin}}" list {{args}}
