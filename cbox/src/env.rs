@@ -269,6 +269,33 @@ mod tests {
         assert!(!vars.contains(&"CLAUDE_CODE_OAUTH_TOKEN".to_string()));
     }
 
+    /// The headline invariant this project exists to provide -- the token
+    /// must reach the box as a secret placeholder, never as a plain
+    /// passthrough value -- was previously guarded only by a doc comment on
+    /// `UNCONDITIONAL_PASSTHROUGH`. Assert it directly, across all three
+    /// mutually exclusive LLM-auth branches `llm_passthrough` can select.
+    #[test]
+    fn github_tokens_never_appear_in_passthrough_vars_in_any_branch() {
+        let _lock = crate::test_env_lock::lock();
+        let _cleared = clear_llm_vars();
+
+        fn assert_no_github_tokens(vars: &[String]) {
+            assert!(!vars.contains(&"GH_TOKEN".to_string()), "{vars:?}");
+            assert!(!vars.contains(&"GITHUB_TOKEN".to_string()), "{vars:?}");
+        }
+
+        // Direct branch: neither ANTHROPIC_BASE_URL nor the OAuth token set.
+        assert_no_github_tokens(&passthrough_vars());
+
+        // base_url branch.
+        let _base = EnvVarGuard::set("ANTHROPIC_BASE_URL", "http://gw");
+        assert_no_github_tokens(&passthrough_vars());
+
+        // oauth branch: takes priority over the base_url branch above.
+        let _oauth = EnvVarGuard::set("CLAUDE_CODE_OAUTH_TOKEN", "oauth-tok");
+        assert_no_github_tokens(&passthrough_vars());
+    }
+
     #[test]
     fn unconditional_vars_are_present_in_every_branch() {
         let _lock = crate::test_env_lock::lock();
