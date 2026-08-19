@@ -186,6 +186,13 @@ async fn handle_session(
             frame = read_frame(reader) => match frame {
                 Ok(Some(Frame::Stdin(bytes))) => {
                     if stdin_writer.write(&bytes).await.is_err() {
+                        // The guest's stdin pipe is gone (e.g. it already
+                        // exited). Same treatment as every other client_gone
+                        // path below: without it, `client_gone` stays false,
+                        // the kill() after this loop never runs, and
+                        // `exec.wait()` afterwards can block forever on a
+                        // guest that is (or may still be) running.
+                        client_gone = true;
                         break;
                     }
                 }
@@ -213,7 +220,12 @@ async fn handle_session(
         let _ = exec.kill().await;
     }
 
-    let code = exec.wait().await.map(|r| r.code()).unwrap_or(0);
+    // `unwrap_or(0)` here would report a failed `wait()` as a clean exit
+    // 0 -- the same class of bug as the truncation `EXIT_CODE_SESSION_FAILED`
+    // exists to prevent on the wire. Fall back to that same sentinel instead,
+    // so a `wait()` failure reaches the client as a real, non-zero-looking
+    // failure rather than silent success.
+    let code = exec.wait().await.map(|r| r.code()).unwrap_or(crate::proto::EXIT_CODE_SESSION_FAILED);
     let _ = write_frame(writer, &Frame::Exit { code }).await;
     Ok(())
 }

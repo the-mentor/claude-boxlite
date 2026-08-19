@@ -27,14 +27,36 @@ pub async fn attach(litebox: &LiteBox, cmd: &[String]) -> Result<i32> {
     }
 
     let mut exec = litebox.exec(command).await.context("interactive exec failed")?;
+
+    // Invariant from here on: once `litebox.exec()` has handed back a live
+    // guest process, no path may drop `exec` without a best-effort kill().
+    // `Execution` has no `Drop` impl, so an early `?` on any of the setup
+    // calls below would otherwise orphan the guest process for good --
+    // `server.rs`'s `handle_session` had this exact leak and fixed it the
+    // same way.
     // crossterm reports (cols, rows); resize_tty takes (rows, cols).
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-    exec.resize_tty(rows as u32, cols as u32).await?;
+    if let Err(e) = exec.resize_tty(rows as u32, cols as u32).await {
+        let _ = exec.kill().await;
+        return Err(e).context("resize_tty failed");
+    }
 
     // Take both streams before sharing `exec`: these need &mut, everything
     // afterwards (resize_tty) needs only &self.
-    let out_stream = exec.stdout().context("no stdout on the interactive exec")?;
-    let stdin_writer = exec.stdin().context("no stdin on the interactive exec")?;
+    let out_stream = match exec.stdout() {
+        Some(s) => s,
+        None => {
+            let _ = exec.kill().await;
+            anyhow::bail!("no stdout on the interactive exec");
+        }
+    };
+    let stdin_writer = match exec.stdin() {
+        Some(s) => s,
+        None => {
+            let _ = exec.kill().await;
+            anyhow::bail!("no stdin on the interactive exec");
+        }
+    };
     let exec = Arc::new(exec);
 
     // Guards raw mode plus every guest-set terminal escape mode (bracketed
@@ -62,8 +84,15 @@ async fn pump(
     // they survive their terminal going away, so if the loop instead ends
     // because local stdin closed (or a write to the guest's stdin failed),
     // the guest may still be running — waiting on it here could hang this
-    // command forever. Mirrors `server.rs`'s `client_gone` flag, which draws
-    // the same distinction for the same reason on the other end of the pipe.
+    // command forever.
+    //
+    // This is *not* the same treatment `server.rs`'s `client_gone` flag gets,
+    // despite the similar-looking split: `server.rs` kills the guest exec
+    // before waiting on it, because a disconnected remote client leaves no
+    // one to consume the guest's output. Here the "client" going away is the
+    // local terminal exiting or losing its stdin, which is the normal,
+    // intentional way to leave a detached box running unattended — so this
+    // path does not kill the guest, and does not wait on it either.
     //
     // `out_stream` returning `None` is the only exit that's a genuine,
     // silent success: it's a direct wrapper around a tokio mpsc receiver
