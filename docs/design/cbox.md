@@ -9,16 +9,13 @@ Claims are tagged **verified** (measured against `boxlite 0.9.7`, the CLI, or a 
 split is load-bearing: two of the open items can still change the design.
 
 **Where the evidence lives.** Every **verified** claim below states its measurement inline, so
-this document stands on its own and does not need to be read alongside anything else. The
-spikes it credits — `scripts/boxlite-secrets-spike.py` and `scripts/boxlite-secrets-spike-rs`
-— are provenance for those measurements and live on
-`claude/sdk-language-mitm-secrets-k9o5m4`; neither branch needs to land before the other.
-`docs/design/boxlite-sdk.md` was copied across from there because it is the direct predecessor
-and is referenced as an argument rather than as a citation.
-
-The one place that ordering matters is implementation, not review: `attach.rs` is described
-below as lifted from the Rust spike, and that code is on the other branch. Either it has
-landed by then or the implementation cherry-picks that single file.
+this document stands on its own. The measurements were originally taken by two throwaway
+spikes — a Python one and a Rust port of it — which answered their questions and were then
+discarded rather than merged. They are not in the tree; if you need to re-run one, the code is
+still reachable from closed PR #33 (`refs/pull/33/head`). Nothing in this document depends on
+reading them, and where a claim needed a permanent harness it got one under `cbox/tests/`.
+`docs/design/boxlite-sdk.md`, the direct predecessor, was kept and is referenced as an argument
+rather than as a citation.
 
 Predecessor: `docs/design/boxlite-sdk.md` evaluated driving BoxLite through its SDK and ended
 by parking the language choice — "pick a language and port the `run`/`exec` paths, keeping
@@ -42,8 +39,8 @@ this is not. Today `docs/design/general.md` records that `GH_TOKEN` must reach t
 "the box runs `gh` and `git push` itself — no proxy can do that on its behalf." A host-side
 MITM can, and cbox is how this repo gets to use it.
 
-**Language.** Rust, decided by porting the Python spike (`scripts/boxlite-secrets-spike.py`)
-to `scripts/boxlite-secrets-spike-rs` and comparing. Every workaround in the Python version
+**Language.** Rust, decided by writing a Python spike against the Python SDK and then porting
+it to Rust and comparing. Every workaround in the Python version
 turned out to be a binding artifact and none survived the port: greenlet's thread affinity
 crashed the I/O pump, `wait()` returned a PyO3 `Future` rather than a coroutine, interactive
 TTY required reaching into `box._box` and `box._sync_helper._sync()`, and REST mode required
@@ -476,9 +473,12 @@ to the command.
 - frame codec round-trips, including partial reads and oversized frames
 
 Not unit-testable and verified by running: TTY attach, the socket path, and substitution
-itself. These need a booted box and real credentials, so they cannot be `cargo test`. The two
-spikes remain the integration harness — they already run these checks against a real box, and
-`scripts/boxlite-secrets-spike-rs` shares the attach implementation.
+itself. These need a booted box and real credentials, so they cannot be `cargo test`. Two
+committed harnesses cover them instead: `cbox/tests/secrets_survive.md` records the
+secrets-survive-the-creating-process procedure and its result, and `cbox/tests/tty_smoke.sh`
+drives the interactive pump under `script(1)` — asserting the bytes round-trip, that the exit
+code propagates, that `TerminalGuard`'s restore sequences reach the terminal, and that `stty -g`
+is unchanged afterwards.
 
 One integration check is load-bearing enough to name explicitly, because an open question
 depends on it and its failure mode is silent:
