@@ -1,8 +1,15 @@
 # cbox: replacing micro-VM management with a Rust binary
 
 This document specifies `cbox`, a Rust program that takes over every part of this repo that
-talks to BoxLite. It is a **design, not a description of what exists** — nothing here is
-implemented.
+talks to BoxLite. It describes the whole design, of which **phase 1 is implemented and the
+rest is the roadmap**.
+
+Phase 1 shipped `up`, `exec`, `down`, `list`, `name`, derived box naming, the GitHub
+two-secret credential model, environment-file loading, and the control socket that lets `exec`
+run while `up` is attached. Deferred to phase 2: `logs`, `inspect`, `stats`, `cp`,
+`--allow-net` / `--network disabled`, `--cpus` / `--memory` / `-u`, `-p/--publish`,
+`clean-cache`, and moving Anthropic auth onto secrets. Where a section below describes
+something in that second list, it is a specification rather than a description.
 
 Claims are tagged **verified** (measured against `boxlite 0.9.7`, the CLI, or a live box),
 **read from source** (asserted by the crate's own code but not exercised), or **open**. The
@@ -96,8 +103,10 @@ design below. The `cd` makes cbox's cwd genuinely the user's, which then require
 
 ```
 cbox up   [name] [-f] [-c] [-v host:box] [-e KEY[=VALUE]] [-i image]
+                 [--disk-size GB] [--env-file path] [--config path]
+                 [--secret NAME=ENV_VAR@hosts]
                  [--cpus N] [--memory MiB] [-u user] [-p [host:]box[/proto]]
-                 [--secret NAME=ENV_VAR@hosts] [--allow-net HOST]... [--network disabled]
+                 [--allow-net HOST]... [--network disabled]
                  [-- cmd...]
 cbox exec [name] [-- cmd...]
 cbox down [name]
