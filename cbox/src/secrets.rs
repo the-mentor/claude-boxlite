@@ -52,6 +52,21 @@ pub fn parse_secret_flag(s: &str) -> Result<SecretSpec> {
         bail!("--secret needs a non-empty name and variable: {s:?}");
     }
 
+    // "gh" is reserved: `secrets::build` special-cases a spec named "gh" as
+    // the built-in GitHub preset and, in that branch, discards its
+    // `hosts` entirely in favor of the two hardcoded GitHub hosts. A
+    // user-supplied `--secret gh=ANYVAR@internal.example.com` would silently
+    // hit that same branch and get retargeted at api.github.com/github.com
+    // instead of the host the user actually named -- rejecting the name
+    // outright is simpler and safer than trying to distinguish "the
+    // preset" from "a user secret that happens to be named gh" downstream.
+    if name == "gh" {
+        bail!(
+            "--secret name \"gh\" is reserved for the built-in GitHub secret \
+             (auto-detected from GH_TOKEN/GITHUB_TOKEN); choose a different name."
+        );
+    }
+
     let hosts: Vec<String> = hosts
         .split(',')
         .map(str::trim)
@@ -86,14 +101,15 @@ pub fn has_github_token() -> bool {
 }
 
 /// The GitHub preset. Its `name` is a marker: `build` expands it into the two
-/// secrets the two protocols need.
+/// secrets the two protocols need, using its own hardcoded host lists rather
+/// than this spec's `hosts` -- which is therefore left empty here rather
+/// than populated with a value nothing reads, so there's no data sitting
+/// around that looks live but isn't. `parse_secret_flag` rejects a
+/// user-supplied `--secret` named "gh" outright, so this is the only
+/// constructor that ever produces one.
 pub fn github_spec() -> SecretSpec {
     let env_var = if set_and_non_empty("GH_TOKEN").is_some() { "GH_TOKEN" } else { "GITHUB_TOKEN" };
-    SecretSpec {
-        name: "gh".into(),
-        env_var: env_var.into(),
-        hosts: vec!["api.github.com".into(), "github.com".into()],
-    }
+    SecretSpec { name: "gh".into(), env_var: env_var.into(), hosts: vec![] }
 }
 
 /// Read each spec's source variable and build the SDK secrets plus the
@@ -212,6 +228,17 @@ mod tests {
     #[test]
     fn a_secret_without_an_env_var_is_rejected() {
         assert!(parse_secret_flag("openai@api.openai.com").is_err());
+    }
+
+    /// "gh" is reserved for the built-in GitHub preset. Without this, a
+    /// user-supplied `--secret gh=ANYVAR@internal.example.com` would hit
+    /// `build`'s "gh" special case and get silently retargeted at
+    /// api.github.com/github.com instead of the host actually named.
+    #[test]
+    fn a_secret_named_gh_is_rejected_as_reserved() {
+        let err = parse_secret_flag("gh=ANYVAR@internal.example.com").unwrap_err().to_string();
+        assert!(err.contains("gh"), "names the reserved name: {err}");
+        assert!(err.contains("reserved"), "explains why: {err}");
     }
 
     #[test]
