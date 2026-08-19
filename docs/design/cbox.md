@@ -217,16 +217,22 @@ until someone deletes a file by hand.
 
 ### Secrets survive the creating process
 
-**Read from source, not verified.** `vmm/controller/shim.rs` carries the comment "Pass port
-mappings to subprocess (shim creates gvproxy)", and secrets reach the shim through its config
-pipe. The MITM proxy is therefore created by the per-box shim, not by the runtime process, and
-lives as long as the box does.
+**Verified.** `vmm/controller/shim.rs` carries the comment "Pass port mappings to subprocess
+(shim creates gvproxy)", and secrets reach the shim through its config pipe, so the MITM proxy
+is created by the per-box shim rather than by the runtime process and lives as long as the box.
 
-If that holds, `cbox exec` gets substitution for free even in the fallback path, because the
-proxy is already running alongside the VM. If it does not, the fallback path silently loses
-substitution and only the socket path works — which would make the socket mandatory rather
-than an optimization. **This must be verified before implementation**: boot a box with
-secrets, exit the creating process, exec from a second process, and check `gh api user`.
+That reading was confirmed by running it, not just by reading it. A box was created with
+GitHub secrets, the creating process exited, the control socket was confirmed absent so that
+`exec` was forced down the fallback route into a process that had never created the box, and
+in that session `printenv GH_TOKEN` returned only `<BOXLITE_SECRET:gh>` while `gh api user`
+authenticated successfully. The procedure and its output are recorded in
+`cbox/tests/secrets_survive.md`.
+
+So `cbox exec` gets substitution on both routes, and the control socket stays an optimization
+for the lock contention rather than a requirement for credentials. Had this gone the other way
+the fallback would have had to be deleted rather than repaired: a session that has silently
+lost substitution is indistinguishable from a working one until a request is rejected, which
+is worse than refusing to start.
 
 ## Credential model
 
@@ -493,13 +499,10 @@ request gets rejected.
 
 These can still change the design.
 
-- **Do secrets survive the creating process?** Read from source as yes (the shim creates
-  gvproxy). If no, the socket path becomes mandatory rather than an optimization, because
-  `exec`'s fallback would silently lose substitution — and *silently* is the problem: a box
-  that has lost substitution looks identical to a working one until a request is actually
-  rejected. Checked during implementation as an integration test (see Testing) rather than as
-  a gate beforehand. The cost of being wrong is bounded: it deletes the fallback path, it does
-  not change the rest of the architecture.
+- ~~**Do secrets survive the creating process?**~~ **Settled: they do.** Verified by running
+  it — see the process-model section above and `cbox/tests/secrets_survive.md`. The fallback
+  route keeps substitution, so the control socket remains an optimization for lock contention
+  rather than a credential requirement.
 - **Does the SDK replace `clean-cache`'s sqlite surgery?** `runtime.images()` exists; whether
   it exposes tag→digest invalidation is unchecked. If not, the `DELETE FROM image_index`
   workaround ports as-is and the design should say so plainly rather than pretend otherwise.
