@@ -45,7 +45,7 @@ upstream handling, not because of an aesthetic preference for symmetry:
   on the route. The box sends a dummy `ANTHROPIC_AUTH_TOKEN` and never sees the real key.
 
 This asymmetry is the entire point of the gateway's keyed mode, and it is enforced by exactly
-one thing: the `llm_vars` conditional in `justfile` (lines 15–21), which decides which
+one thing: the three-way conditional in `env::llm_passthrough()` (`cbox/src/env.rs`), which decides which
 credential-shaped variables get forwarded into the box based on what's set in `.env`. Nothing
 in the schema enforces it — `config.yaml` validates cleanly whether or not `/claude` carries
 a `backendAuth` block, and a future edit could add one without any validator objecting. The
@@ -53,7 +53,7 @@ guarantee that `/claude` has no credential and no host override is a property of
 file's contents, checked only by reading it (or by the live asymmetry test below) — there is
 no schema rule that would catch a regression.
 
-`llm_vars` picks one of three mutually exclusive sets based on what's in `.env`:
+`llm_passthrough()` picks one of three mutually exclusive sets based on what's in the environment:
 
 | `.env` state | Vars forwarded to the box | Box's `ANTHROPIC_BASE_URL` |
 |---|---|---|
@@ -67,12 +67,18 @@ as a gateway `ANTHROPIC_BASE_URL` — that's the credential-custody claim, and i
 by actually running the conditional against a real `.env` for all four rows, not assumed from
 reading the code.
 
-Be honest about what this does and doesn't cover: `GH_TOKEN`/`GITHUB_TOKEN` deliberately
-*still* reach the box (they're in `passthrough_vars` unconditionally), because the box runs
-`gh` and `git push` itself — no proxy can do that on its behalf. One credential left the VM
-here, not all of them. The gateway also holds a copy of `GH_TOKEN` (injected into the
-`github` MCP target's `Authorization` header), so the same token exists in two places by
-design.
+Be honest about what this does and doesn't cover. This section used to record that
+`GH_TOKEN`/`GITHUB_TOKEN` deliberately still reached the box, on the reasoning that the box
+runs `gh` and `git push` itself and no proxy could do that on its behalf. **That is no longer
+true, and the reasoning was wrong.** A host-side MITM proxy can and does do it: the box holds
+only `<BOXLITE_SECRET:gh>`, and the real token is substituted into requests bound for
+`github.com` and `api.github.com`. `gh`, `git clone`, and `git push` all authenticate without
+the value entering the VM. See `docs/design/cbox.md` for the mechanism, including why git
+needs a second, base64-preencoded secret that `gh` does not.
+
+The gateway still holds its own copy of `GH_TOKEN` (injected into the `github` MCP target's
+`Authorization` header), so the token does exist in two host-side places by design — but
+neither of them is inside the box.
 
 ## Ports, and why loopback is not the security boundary
 
