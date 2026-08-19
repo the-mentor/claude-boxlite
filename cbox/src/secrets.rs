@@ -154,11 +154,20 @@ pub fn build(specs: &[SecretSpec]) -> Result<Built> {
 ///
 /// Blanking the helper is required, not tidiness: without it git falls back to
 /// it on a 401 and sends base64'd garbage, which fails confusingly.
+///
+/// The blank must be scoped to `credential.https://github.com.helper`, not
+/// the generic `credential.helper` — git resolves credential config by
+/// urlmatch specificity, not by which file it came from, so a generic
+/// `--global` blank does not override a URL-scoped entry from a lower-
+/// precedence file (there is no such entry baked into the image anymore, but
+/// a scoped blank is also what correctly overrides one if some other layer
+/// ever adds it back). Measured with git 2.50.1 via
+/// `git config --get-urlmatch credential https://github.com`.
 pub fn git_bootstrap_script() -> String {
     format!(
         "git config --global http.https://github.com/.extraHeader \
          'Authorization: Basic {}' && \
-         git config --global credential.helper ''",
+         git config --global credential.https://github.com.helper ''",
         placeholder("gh_basic")
     )
 }
@@ -326,7 +335,15 @@ mod tests {
         assert!(script.contains("<BOXLITE_SECRET:gh_basic>"));
         assert!(script.contains("extraHeader"));
         // Without this, git falls back to the helper on a 401 and sends
-        // base64'd garbage.
-        assert!(script.contains("credential.helper"));
+        // base64'd garbage. It must be scoped to the same URL
+        // (`credential.https://github.com.helper`), not the generic
+        // `credential.helper` -- git resolves credential config by urlmatch
+        // specificity, so a generic blank does not override a URL-scoped
+        // entry from another config file. Measured live with
+        // `git config --get-urlmatch credential https://github.com`.
+        assert!(
+            script.contains("credential.https://github.com.helper"),
+            "the blank must be scoped to the same URL, not the generic key: {script}"
+        );
     }
 }
