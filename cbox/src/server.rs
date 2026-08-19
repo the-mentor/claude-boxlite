@@ -5,6 +5,7 @@
 //! runtime; serving exec requests over a socket is what lets `cbox exec` work
 //! while `up` is attached, without introducing a daemon.
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,13 +20,28 @@ pub fn socket_path(home: &Path) -> PathBuf {
     home.join("cbox.sock")
 }
 
+/// Bind the control socket and restrict it to the owner. Split out from
+/// `serve` so the permission it sets is unit-testable without also running
+/// the (infinite) accept loop.
+fn bind(path: &Path) -> Result<UnixListener> {
+    // A leftover socket from a SIGKILL'd `up` would block bind.
+    let _ = std::fs::remove_file(path);
+    let listener = UnixListener::bind(path)
+        .with_context(|| format!("cannot bind {}", path.display()))?;
+    // Load-bearing on Linux, best-effort on macOS: Darwin does not reliably
+    // enforce a Unix-domain socket's own mode on `connect()`, so the real
+    // access control is the box home directory's 0700 mode set in
+    // `commands::up::run` -- this is done in addition, not instead, since
+    // Linux does enforce it.
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("cannot restrict permissions on {}", path.display()))?;
+    Ok(listener)
+}
+
 /// Accept connections until cancelled. Each connection is one exec session.
 pub async fn serve(litebox: Arc<LiteBox>, home: PathBuf) -> Result<()> {
     let path = socket_path(&home);
-    // A leftover socket from a SIGKILL'd `up` would block bind.
-    let _ = std::fs::remove_file(&path);
-    let listener = UnixListener::bind(&path)
-        .with_context(|| format!("cannot bind {}", path.display()))?;
+    let listener = bind(&path)?;
 
     loop {
         // A Unix-domain listener's `accept()` errors (e.g. a transient
@@ -210,6 +226,42 @@ mod tests {
     fn socket_lives_inside_the_box_home() {
         let p = socket_path(Path::new("/tmp/boxes/demo"));
         assert_eq!(p, PathBuf::from("/tmp/boxes/demo/cbox.sock"));
+    }
+
+    #[tokio::test]
+    async fn the_socket_is_created_with_owner_only_permissions() {
+        // Any local process that can reach this socket gets arbitrary TTY
+        // exec into a box that substitutes a real credential into outbound
+        // HTTPS -- this is the load-bearing assertion for Critical 3.
+        let dir = std::env::temp_dir()
+            .join(format!("cbox-server-test-perm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = socket_path(&dir);
+
+        let _listener = bind(&path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "socket must be owner-only, got {mode:o}");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn bind_tightens_permissions_on_a_pre_existing_stale_socket() {
+        // `bind` unlinks-and-rebinds rather than reusing whatever is there,
+        // so a stale socket left with looser permissions by an earlier run
+        // must still end up owner-only after this runs.
+        let dir = std::env::temp_dir()
+            .join(format!("cbox-server-test-stale-perm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = socket_path(&dir);
+        std::fs::write(&path, b"stale").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+
+        let _listener = bind(&path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "re-bound socket must be owner-only, got {mode:o}");
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

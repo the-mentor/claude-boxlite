@@ -1,5 +1,6 @@
 //! `cbox up` — create a box and attach the terminal to it.
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -57,8 +58,7 @@ pub async fn run(args: UpArgs) -> Result<()> {
     plain.push(("BOX_NAME".into(), name.clone()));
 
     let home = config::box_home(&name);
-    std::fs::create_dir_all(&home)
-        .with_context(|| format!("cannot create box home {}", home.display()))?;
+    secure_box_home(&home)?;
 
     let registries = config::resolve_config_path(args.config.as_deref())
         .map(|p| config::load_registries(&p))
@@ -150,6 +150,26 @@ pub async fn run(args: UpArgs) -> Result<()> {
     result.map(|_code| ())
 }
 
+/// Create the box's home directory if needed, and ensure it is owner-only.
+///
+/// The control socket `server::serve` binds inside this directory grants any
+/// local process arbitrary TTY exec into a box that substitutes a real
+/// credential (e.g. a GitHub token) into outbound HTTPS -- so this directory
+/// must never be traversable by anyone but the owner. `create_dir_all` alone
+/// yields 0755 and no-ops on an already-existing directory, so the
+/// permission is set unconditionally afterward, which also tightens a home
+/// left over-permissive by an earlier run. macOS does not reliably enforce a
+/// Unix-domain socket's own mode on `connect()`, so this directory
+/// permission -- not the socket's own mode, set separately in
+/// `server::serve` -- is the one that actually gates access.
+fn secure_box_home(home: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(home)
+        .with_context(|| format!("cannot create box home {}", home.display()))?;
+    std::fs::set_permissions(home, std::fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("cannot restrict permissions on box home {}", home.display()))?;
+    Ok(())
+}
+
 /// Point git at the pre-encoded secret so GitHub operations authenticate.
 ///
 /// This step is entirely best-effort: it must never take `cbox up` down with
@@ -212,5 +232,42 @@ async fn run_git_bootstrap(litebox: &LiteBox) {
             "cbox: warning: git credential bootstrap failed to start ({e}); \
              git operations against GitHub will fail to authenticate."
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::secure_box_home;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_freshly_created_box_home_is_owner_only() {
+        let dir = std::env::temp_dir()
+            .join(format!("cbox-up-test-home-fresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        secure_box_home(&dir).unwrap();
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "fresh box home must be owner-only, got {mode:o}");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_pre_existing_over_permissive_box_home_is_tightened() {
+        // Guards against a home left over-permissive by an earlier run --
+        // this is the case `create_dir_all` alone silently leaves open,
+        // since it no-ops on an already-existing directory.
+        let dir = std::env::temp_dir()
+            .join(format!("cbox-up-test-home-loose-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        secure_box_home(&dir).unwrap();
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "a loosely-permissioned existing home must be tightened, got {mode:o}");
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
