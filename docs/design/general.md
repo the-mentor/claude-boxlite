@@ -48,33 +48,20 @@ outright breaking, re-pull.
 
 Baking credentials into the image was never on the table — an image is meant to be rebuilt,
 pushed, and pulled by anyone with registry access, so anything baked in would leak to whoever
-gets the image. Instead, `justfile`'s `passthrough_vars` lists the variables forwarded into the
-box when they're set (sourced from a gitignored `.env` via `set dotenv-load`, or the host
-environment): Claude auth, an always-optional `ANTHROPIC_MODEL` layered on top of whichever
-Claude-auth set applies, GitHub auth (`GH_TOKEN`/`GITHUB_TOKEN`), and git identity
-(`GIT_AUTHOR_*`/`GIT_COMMITTER_*`). None of it exists in the image; all of it is injected at
-`boxlite run`/`exec` time as `-e` flags, built by iterating `passthrough_vars` and skipping
-anything unset. Adding a new credential to the box is a one-line change: add the variable name
-to `passthrough_vars`.
+gets the image. Instead, `cbox` (the Rust binary the `justfile`'s `up`/`exec`/`down`/`list`
+recipes wrap) forwards a fixed list of plain, non-secret variables — Claude auth (a subscription
+OAuth token, a keyed-gateway auth token, or a raw API key, depending on what's set; see
+`docs/design/agentgateway.md`), an always-optional `ANTHROPIC_MODEL`, git identity
+(`GIT_AUTHOR_*`/`GIT_COMMITTER_*`), and terminal-identity variables — plus `BOX_NAME`, set to the
+box name being booted or attached to. None of it lives in the image; it's composed at box-create
+time by `env::passthrough_vars()` and `env::compose()` in `cbox/src/env.rs`. Adding a new
+unconditional passthrough variable is a one-line change there.
 
-`just up`/`just shell` also always inject `BOX_NAME`, set to the box name being booted or
-attached to, so a session can tell which box it's running in. It sits outside
-`passthrough_vars` because it isn't a host environment variable to forward — it's the name the
-recipe was invoked with.
-
-The Claude auth slice of that list isn't a fixed set of variables — it's `llm_vars`, computed
-in the justfile from what `.env` actually contains, because a subscription OAuth token and a
-raw API key need different variables downstream and are mutually exclusive. See
-`docs/design/agentgateway.md` for the full shape of that conditional and how it interacts with
-the gateway's keyed and passthrough routes.
-
-## GitHub auth
-
-`custom/Dockerfile` configures git's `credential.https://github.com.helper` to `gh auth
-git-credential`. That one line is what makes an injected `GH_TOKEN`/`GITHUB_TOKEN` authenticate
-both the `gh` CLI and `git clone`/`push` over HTTPS, with no separate `gh auth login` step
-inside the box — git delegates credential lookups to `gh`, and `gh` already trusts the token
-sitting in the environment.
+GitHub auth (`GH_TOKEN`/`GITHUB_TOKEN`) is deliberately **not** on that list — the whole point of
+`cbox`'s secrets model, covered in `docs/design/cbox.md`, is that a token like this never
+reaches the guest as a plain value at all, only as a `<BOXLITE_SECRET:...>` placeholder that a
+host-side proxy substitutes on the wire. Read `docs/design/cbox.md` before touching
+`cbox/src/secrets.rs`, `cbox/src/env.rs`, or `custom/Dockerfile`'s git configuration.
 
 ## Authenticated registries (e.g. ECR)
 

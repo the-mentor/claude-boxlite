@@ -14,12 +14,13 @@ on `:15003` and two Anthropic routes on `:15002`.
 ## Commands
 
 ```bash
-just up-dev            # build images (base + custom, pushed to local registry), then boot the box
-just up                # boot the box without rebuilding (images must already be built)
+just up-dev            # build images (base + custom, pushed to local registry) and the cbox binary, then boot the box
+just up                # boot the box without rebuilding (images and the cbox binary must already be built)
 just build              # start the local registry, build base + custom images, push custom
 just build --no-cache   # same, bypassing the Docker layer cache (see below)
+just build-cbox          # build the cbox binary (cbox/target/release/cbox); up/exec/down/list all hard-fail without it
 just exec               # open a session in the running box (alias: just shell)
-just list               # list running boxes across every box name (see below), forwarding args to `boxlite list`
+just list               # list running boxes across every box name (see below), forwarding args to cbox's own `list` command
 just down               # stop and remove the box
 just gateway-up/down/logs # manage the host-side agentgateway
 just gateway-generate-ui-password # change the admin UI's default credentials, see below
@@ -60,8 +61,9 @@ anywhere. `just` sets the working directory to the justfile's own directory when
 `local-development/registry/docker-compose.yml`) resolve correctly either way. `just
 uninstall` removes the symlink.
 
-There is no test suite or linter in this repo; verification is building the images and
-booting a box (`just up-dev`).
+`cbox` has its own `cargo test` suite (run `cargo test` from `cbox/`); there is otherwise no
+repo-wide test suite or linter, so verification of the box/image side is still building the
+images and booting a box (`just up-dev`).
 
 ## Running multiple boxes at once
 
@@ -69,19 +71,26 @@ booting a box (`just up-dev`).
 separate terminals; see `docs/design/general.md` for why BoxLite requires it. `just list` and
 `just clean-cache` iterate over every `boxes/*` home to cover all box names.
 
-`just exec <name>` only succeeds once the `just up <name>` session for that same box has
-exited. Both commands open their own local BoxLite runtime and take the same per-home lock, so
-running `exec` while `up` is still attached fails with `Failed to acquire runtime lock ...
-Another BoxliteRuntime is already using directory`. That's expected, not a bug — exit (or
-Ctrl-C) the `up` session first.
+`just exec <name>` does **not** require the `just up <name>` session for that box to have
+exited first. `cbox up` binds a per-box control socket (`cbox.sock`, inside that box's home)
+that serves exec sessions concurrently with the attached terminal, so `cbox exec` connects to
+it and multiplexes a second interactive session onto the same running box while `up` is still
+attached. Only when no control socket is present — the creating `up` has already exited, or
+was SIGKILLed and left a stale socket, which `exec` detects and cleans up automatically — does
+`exec` fall back to opening its own BoxLite runtime. *That* fallback path still takes the
+per-home lock and fails with `Failed to acquire runtime lock ... Another BoxliteRuntime is
+already using directory` if some other process is holding it (e.g. `up` for that same box is
+still attached and, for whatever reason, its control socket didn't come up).
 
 ## Architecture
 
 - **Box side.** The two-layer image, the local-registry image handoff (and the `clean-cache`
-  tag→digest gotcha), environment-variable credential passthrough, GitHub auth wiring, and
-  authenticated-registry (ECR) support are all documented in `docs/design/general.md` — read
-  it before touching the Dockerfiles, the `justfile`'s image/registry recipes, or
-  `passthrough_vars`.
+  tag→digest gotcha), and authenticated-registry (ECR) support are all documented in
+  `docs/design/general.md` — read it before touching the Dockerfiles or the `justfile`'s
+  image/registry recipes. Environment-variable passthrough and GitHub secret substitution are
+  `cbox`'s own model, not the justfile's: `env::passthrough_vars()` (a Rust function in
+  `cbox/src/env.rs`, not a justfile variable) and `cbox/src/secrets.rs`, documented in
+  `docs/design/cbox.md`.
 - **Host-side gateway.** `agentgateway/docker-compose.yml` runs `agentgateway` itself — serving
   MCP on `:15003` (what the box's baked `/root/.claude.json` points at) and two Anthropic routes
   on `:15002` — plus a sibling `github-mcp` container with no published host port, and an admin
