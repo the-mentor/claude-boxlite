@@ -6,7 +6,8 @@ use anyhow::{Result, bail};
 use boxlite::{BoxOptions, RootfsSpec, Secret};
 use boxlite::runtime::options::VolumeSpec;
 
-/// Matches the justfile's `disk_size` default.
+/// Disk size for a booted box. Not yet user-configurable (see the plan's
+/// "Out of scope" list for `--cpus`/`--memory`/`-u`-style flags).
 pub const DISK_SIZE_GB: u64 = 10;
 
 pub struct UpFlags {

@@ -3,7 +3,6 @@ set dotenv-load
 base_tag   := "claude-boxlite-base"
 custom_tag := "claude-boxlite-custom"
 registry   := "localhost:5551"
-box_name   := "claude-box"
 compose    := "docker compose -f local-development/registry/docker-compose.yml"
 gateway    := "docker compose -f agentgateway/docker-compose.yml"
 
@@ -220,7 +219,7 @@ clean-cache:
 
 # Build images and the cbox binary, then boot the box and launch Claude Code.
 # Usage: just up-dev [box-name] [-f] [-c] [-v host:box ...] [-e KEY[=VALUE] ...] [-i image] [-- cmd...]
-up-dev *args=box_name: build build-cbox (up args)
+up-dev *args: build build-cbox (up args)
 
 cbox_bin := justfile_directory() + "/cbox/target/release/cbox"
 

@@ -28,7 +28,9 @@ just registry-login     # log in to an authenticated registry (e.g. ECR), see be
 just install/uninstall  # symlink the cb wrapper onto PATH (see below)
 ```
 
-`up`/`up-dev` take an optional box name (default `claude-box`) and flags: `-f`/`--force`
+`up`/`up-dev` take an optional box name (default: derived from the enclosing git repo's
+root directory, falling back to the cwd's name outside a repo; pin one explicitly with
+`CBOX_NAME` or a positional argument) and flags: `-f`/`--force`
 (replace an existing box of the same name), `-c`/`--cwd` (mount host cwd onto `/workspace`),
 `-v host:box` (mount an arbitrary host folder, repeatable), `-e KEY=VALUE` (inject an extra
 environment variable into the box, repeatable, appended to `envflags` alongside

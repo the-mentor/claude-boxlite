@@ -37,9 +37,9 @@ fn is_set_and_non_empty(key: &str) -> bool {
     std::env::var(key).map(|v| !v.is_empty()).unwrap_or(false)
 }
 
-/// Which Anthropic auth vars to forward, mirroring the justfile's `llm_vars`
-/// conditional (justfile:27-33) rather than a flat union. A subscription
-/// OAuth token wins and travels with ANTHROPIC_BASE_URL if one is set (the
+/// Which Anthropic auth vars to forward: one of three mutually exclusive
+/// sets, not a flat union. A subscription OAuth token wins and travels with
+/// ANTHROPIC_BASE_URL if one is set (the
 /// `/claude` passthrough route on the gateway) or goes direct if not.
 /// Otherwise a set ANTHROPIC_BASE_URL means keyed-gateway mode via `/api`,
 /// where the real API key must deliberately stay host-side — the gateway
