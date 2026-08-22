@@ -41,8 +41,11 @@ Matrix over the table above. Steps:
 1. Checkout.
 2. Install `protoc`: `apt-get install -y protobuf-compiler` (Linux) / `brew install protobuf`
    (macOS).
-3. Install Rust via `dtolnay/rust-toolchain@stable` — one action, works identically on both
-   runner OSes, rather than hand-rolling `rustup` invocations per platform.
+3. No toolchain-install action needed — confirmed against `actions/runner-images`' own readmes
+   that both `ubuntu-latest` (Ubuntu 24.04: "Cargo 1.97.1, Rust 1.97.1, Rustup 1.29.0") and
+   `macos-14` ("Rust 1.96.0", "Rustup 1.29.0") ship Rust/Cargo/rustup preinstalled. A plain
+   `rustup update stable` run step is enough to land on a current toolchain, with no third-party
+   action to vet or pin (see Action pinning, below).
 4. `cd cbox && cargo test --release` — runs the existing suite (`cbox/tests/`) on both platforms.
    This is the CI-validation half: a `cbox` change that breaks Linux or macOS fails here on every
    push, tag or not.
@@ -64,7 +67,7 @@ Matrix over the table above. Steps:
 Reads `cbox/Cargo.toml`'s `version` field (currently `0.1.0`) to compute a tag, and behaves
 differently depending on what triggered the run:
 
-- **Push to `dev`:** downloads both artifacts, publishes/overwrites a rolling release tagged
+- **Push to `dev`:** downloads both artifacts (`actions/download-artifact`), publishes/overwrites a rolling release tagged
   `v<version>-dev` (e.g. `v0.1.0-dev`) — delete the existing release+tag first if present (`gh
   release delete v0.1.0-dev --yes --cleanup-tag || true`), then `gh release create v0.1.0-dev
   cbox-linux-x86_64 cbox-macos-arm64 --title "cbox dev build" --prerelease`. This is the "latest
@@ -81,6 +84,47 @@ differently depending on what triggered the run:
 Uses the `gh` CLI (preinstalled on GitHub-hosted runners, authenticated via the default
 `GITHUB_TOKEN`) rather than a third-party release action — one fewer external action to trust for
 something this workflow-shaped. The job needs `permissions: contents: write` to create releases.
+
+## Action pinning & supply chain
+
+Only actions published by a GitHub-verified creator are used, and every `uses:` is limited to
+three: `actions/checkout`, `actions/upload-artifact`, `actions/download-artifact` — all under the
+`actions` org (GitHub's own, carries the Marketplace "Verified creator" badge). No Rust-toolchain
+action is needed at all (see step 3 above), which removes what would otherwise be the one
+plausible non-`actions`-org dependency (e.g. `dtolnay/rust-toolchain`, well-regarded but not
+itself a verified-creator publisher). Release publishing goes through the `gh` CLI directly
+rather than a marketplace release action, for the same reason.
+
+Each `uses:` is pinned to its full 40-character commit SHA, with the version it corresponds to
+as a trailing comment — the standard mitigation against a tag being retargeted after the fact:
+
+```yaml
+- uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+- uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+- uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+```
+
+The exact SHAs above are illustrative — resolve the real ones at implementation time (e.g. `gh
+api repos/actions/checkout/git/refs/tags/v4.2.2`, or copying the commit SHA from the tag's page
+on GitHub) rather than trusting a value typed from memory into this doc.
+
+### Keeping pins current: `.github/dependabot.yml`
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+```
+
+Dependabot natively understands the SHA-pin-plus-version-comment convention: it resolves the new
+release's commit SHA and updates both the hash and the trailing comment in the same PR, so pinning
+to a hash doesn't turn into a manual chore — it still gets bumped automatically, just as a
+reviewable PR instead of a silent floating-tag update. This file has no dependency on the
+workflow existing yet; it's safe to add now and will simply have nothing to bump until
+`cbox-release.yml` lands.
 
 ## Local install path: `just install-cbox [tag]`
 
