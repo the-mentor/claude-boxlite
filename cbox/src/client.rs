@@ -21,7 +21,6 @@ use std::io::Write as _;
 use std::path::Path;
 
 use anyhow::Result;
-use tokio::io::AsyncReadExt as _;
 use tokio::net::UnixStream;
 
 use crate::proto::{ExecRequest, Frame, read_frame, write_frame};
@@ -158,8 +157,9 @@ async fn proxy_loop(
 ) -> Result<i32> {
     let mut sigwinch =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())?;
-    let mut stdin = tokio::io::stdin();
-    let mut buf = [0u8; 4096];
+    // Not `tokio::io::stdin()` -- see `stdin_reader` for why: mirrors
+    // `attach::pump`'s own reasoning and fix for the exact same hang.
+    let mut stdin = crate::stdin_reader::StdinReader::spawn();
 
     loop {
         tokio::select! {
@@ -193,15 +193,15 @@ async fn proxy_loop(
                     return Ok(1);
                 }
             },
-            read = stdin.read(&mut buf) => {
-                let n = read?;
-                if n == 0 {
+            chunk = stdin.read() => {
+                let chunk = chunk?;
+                if chunk.is_empty() {
                     eprintln!(
                         "cbox: local stdin closed; the guest session may still be running detached"
                     );
                     return Ok(1);
                 }
-                write_frame(writer, &Frame::Stdin(buf[..n].to_vec())).await?;
+                write_frame(writer, &Frame::Stdin(chunk)).await?;
             }
             _ = sigwinch.recv() => {
                 if let Ok((cols, rows)) = crossterm::terminal::size() {

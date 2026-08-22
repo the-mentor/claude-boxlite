@@ -1,7 +1,7 @@
 //! `cbox exec` — open a session in a running box.
 
 use anyhow::{Context, Result};
-use boxlite::{BoxliteOptions, BoxliteRuntime};
+use boxlite::{BoxStatus, BoxliteOptions, BoxliteRuntime};
 
 use crate::{attach, client, config, naming};
 
@@ -50,6 +50,29 @@ pub async fn run(name: Option<String>, cmd: Vec<String>) -> Result<()> {
                 .get(&resolved.name)
                 .await?
                 .with_context(|| format!("no box named {}", resolved.name))?;
+
+            // No control socket means whatever `cbox up` created this box
+            // is gone. With `detach: false` now the default, that's the
+            // common case, not a crash: closing that session's terminal let
+            // the watchdog stop the VM. `litebox.exec()` below would start a
+            // Stopped box implicitly and silently (boxlite's own doc on
+            // `start()`: "Also called implicitly by exec() if the box is
+            // not running") -- eating a real ~2.2s cold boot with no
+            // explanation, which reads as a hang. Start it explicitly here
+            // instead, after saying so, rather than starting it silently or
+            // refusing outright and just pushing the same wait onto a
+            // required `cbox up` first.
+            let status = litebox.info().status;
+            if status != BoxStatus::Running {
+                eprintln!(
+                    "cbox: {} is {status}; starting it (cold boot, not a resume -- ~2s)...",
+                    resolved.name
+                );
+                litebox.start().await.with_context(|| {
+                    format!("failed to start {} (was {status})", resolved.name)
+                })?;
+            }
+
             let code = attach::attach(&litebox, &cmd).await?;
             if code != 0 {
                 std::process::exit(exit_status(code));

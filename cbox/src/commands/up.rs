@@ -21,6 +21,10 @@ pub struct UpArgs {
     pub env_file: Option<PathBuf>,
     pub cmd: Vec<String>,
     pub disk_size_gb: Option<u64>,
+    /// Let the box outlive this process. See `boxopts::build`'s `detach`
+    /// comment for the full reasoning; default is `false`, matching what
+    /// the pre-cbox justfile actually passed to `boxlite run`.
+    pub detach: bool,
 }
 
 pub async fn run(args: UpArgs) -> Result<()> {
@@ -47,6 +51,15 @@ pub async fn run(args: UpArgs) -> Result<()> {
     }
     let built = secrets::build(&specs)?;
     let has_github = specs.iter().any(|s| s.name == "gh");
+
+    // Computed before `built.secrets` is moved into `boxopts::build` below.
+    // Never the values themselves -- see `sidecar::hash_secret_value` for
+    // why a hash is enough and adequate here.
+    let secret_hashes: std::collections::BTreeMap<String, u64> = built
+        .secrets
+        .iter()
+        .map(|s| (s.name.clone(), sidecar::hash_secret_value(&s.value)))
+        .collect();
 
     let passthrough = env::passthrough_vars();
     let mut plain = env::compose(&args.env_flags, &passthrough, &built.source_vars)?;
@@ -100,25 +113,67 @@ pub async fn run(args: UpArgs) -> Result<()> {
         cmd,
         invocation_dir: cwd,
         disk_size_gb: args.disk_size_gb,
+        detach: args.detach,
     };
     let options = boxopts::build(&flags, built.secrets, plain)?;
 
     println!("cbox: starting {name} ({})", resolved.source.describe());
-    let litebox = runtime
-        .create(options, Some(name.clone()))
+    // get_or_create rather than create: with detach: false the common case
+    // is exactly a name collision -- the box from a previous session is
+    // sitting there Stopped, and that must be resumed, not rejected. `-f`
+    // above already removed any existing box under this name, so on that
+    // path this always creates fresh.
+    let (litebox, created) = runtime
+        .get_or_create(options, Some(name.clone()))
         .await
-        .context("failed to create the box")?;
+        .context("failed to create or reuse the box")?;
 
-    // Best-effort, like the git bootstrap below: `cbox list` losing the
-    // origin column for this one box is far better than `cbox up` failing
-    // over a metadata write.
-    if let Err(e) = sidecar::write(&home, &flags.invocation_dir) {
-        eprintln!(
-            "cbox: warning: could not record this box's origin ({e}); \
-             `cbox list` won't show a directory for it."
+    if created {
+        // Best-effort, like the git bootstrap below: `cbox list` losing the
+        // origin column for this one box is far better than `cbox up`
+        // failing over a metadata write.
+        if let Err(e) = sidecar::write(&home, &flags.invocation_dir, &secret_hashes) {
+            eprintln!(
+                "cbox: warning: could not record this box's origin ({e}); \
+                 `cbox list` won't show a directory for it."
+            );
+        }
+    } else {
+        // `get_or_create`'s own doc: "the provided options are ignored (no
+        // config drift validation)". So the reused box keeps whatever
+        // credentials, mounts, and disk size it had when first created,
+        // silently -- unless this says so, that's invisible until something
+        // fails (e.g. a rotated token 401ing), which is precisely the
+        // failure class this whole project exists to prevent.
+        println!(
+            "cbox: reusing existing box {name}; its configuration (credentials, mounts, \
+             disk size) dates from when it was first created. Run with -f/--force to \
+             recreate it with today's settings instead."
         );
+        if let Some(existing) = sidecar::read(&home) {
+            let changed = sidecar::changed_secrets(&existing.secret_hashes, &secret_hashes);
+            if !changed.is_empty() {
+                // A warning, not a refusal: the whole point of reuse is to
+                // resume a box that's otherwise fine, and most reuses won't
+                // have rotated anything. Refusing here would force -f (a
+                // full recreate) onto every rotation, including ones that
+                // don't matter for this session (e.g. a secret this
+                // invocation doesn't even use). Naming the stale secret and
+                // the fix is what turns this from an invisible 401 later
+                // into an actionable line now.
+                eprintln!(
+                    "cbox: warning: {} in your environment no longer match(es) what this box \
+                     was created with -- it will keep substituting the OLD value(s) until you \
+                     run with -f/--force to recreate it.",
+                    changed.join(", ")
+                );
+            }
+        }
     }
 
+    // Idempotent on an already-Running box (the SDK's own doc on `start()`),
+    // so this is correct whether the box above was just created, resumed
+    // from Stopped, or was already Running.
     litebox.start().await.context("failed to start the box")?;
 
     if has_github {

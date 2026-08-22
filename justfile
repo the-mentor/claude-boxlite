@@ -218,13 +218,13 @@ clean-cache:
     done
 
 # Build images and the cbox binary, then boot the box and launch Claude Code.
-# Usage: just up-dev [box-name] [-f] [-c] [-v host:box ...] [-e KEY[=VALUE] ...] [-i image] [-- cmd...]
+# Usage: just up-dev [box-name] [-f] [-c] [-v host:box ...] [-e KEY[=VALUE] ...] [-i image] [-d] [-- cmd...]
 up-dev *args: build build-cbox (up args)
 
 cbox_bin := justfile_directory() + "/cbox/target/release/cbox"
 
 # Boot the box and launch Claude Code.
-# Usage: just up [box-name] [-f] [-c] [-v host:box ...] [-e KEY[=VALUE] ...] [-i image] [-- cmd...]
+# Usage: just up [box-name] [-f] [-c] [-v host:box ...] [-e KEY[=VALUE] ...] [-i image] [-d] [-- cmd...]
 #
 # The `cd` is load-bearing: `just` sets the working directory to the justfile's
 # own directory, so without it cbox would always see the repo root as its cwd
