@@ -62,6 +62,13 @@ enum Commands {
         /// gives headroom for in-box docker pull/apt/npm/build caches.
         #[arg(long = "disk-size")]
         disk_size: Option<u64>,
+        /// Let the box outlive this session so `cbox exec` can reach it
+        /// later. Without this, closing the terminal lets boxlite's own
+        /// watchdog stop the VM -- the disk and box record survive, and a
+        /// later `cbox up` resumes it (a cold boot, not a suspend/resume).
+        /// Mirrors `boxlite run`'s `-d`.
+        #[arg(short = 'd', long = "detach")]
+        detach: bool,
         #[arg(last = true)]
         cmd: Vec<String>,
     },
@@ -94,11 +101,11 @@ async fn main() -> Result<()> {
         }
         Commands::Up {
             name, force, cwd_mount, volumes, env_flags, image, config, secret_flags, env_file, cmd,
-            disk_size,
+            disk_size, detach,
         } => {
             commands::up::run(commands::up::UpArgs {
                 name, force, cwd_mount, volumes, env_flags, image, config, secret_flags, env_file,
-                cmd, disk_size_gb: disk_size,
+                cmd, disk_size_gb: disk_size, detach,
             })
             .await?;
         }

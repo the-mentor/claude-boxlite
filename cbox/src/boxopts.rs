@@ -11,6 +11,31 @@ use boxlite::runtime::options::VolumeSpec;
 /// `-u`-style flags remain out of scope per the plan.
 pub const DISK_SIZE_GB: u64 = 10;
 
+/// The box's init process (PID 1 inside the container) -- never the user's
+/// command.
+///
+/// `BoxOptions` has no field to request a TTY at all: a pty is allocated
+/// only per-`Exec` RPC (`attach::attach` is what calls `.tty(true)`, on a
+/// *separate* exec started after the box is up). So the init process can
+/// never be the interactive one, no matter what the user asked to run. If
+/// it were the user's command (e.g. `claude`), it would run with no TTY,
+/// exit immediately, and — because it's PID 1 — its exit tears down the
+/// whole container PID namespace, killing every other exec in it. That
+/// includes the real, TTY-backed attach exec started a few milliseconds
+/// later. Two launches of the same command, the first silently killing the
+/// second, is the exact bug this constant exists to prevent.
+///
+/// `sleep infinity` is a real binary in this repo's image, checked rather
+/// than assumed: `docker run --rm claude-boxlite-custom sh -c 'command -v
+/// sleep && sleep --version'` reports `/usr/bin/sleep`, GNU coreutils 9.7,
+/// against the actual image this repo builds
+/// (`custom/Dockerfile` FROM `claude-boxlite-base` FROM `node:26-trixie-slim`).
+/// coreutils is also an "essential" Debian package present in every
+/// `-slim` variant, so this isn't a fluke of this one image either, and
+/// GNU coreutils has supported the `infinity` duration since well before
+/// 9.7.
+const KEEP_ALIVE_CMD: &[&str] = &["sleep", "infinity"];
+
 pub struct UpFlags {
     pub image: String,
     pub cwd_mount: bool,
@@ -18,6 +43,9 @@ pub struct UpFlags {
     pub cmd: Vec<String>,
     pub invocation_dir: PathBuf,
     pub disk_size_gb: Option<u64>,
+    /// Whether the box should outlive this process. Mirrors `boxlite run`'s
+    /// `-d`/`--detach`; see `build` for the full reasoning.
+    pub detach: bool,
 }
 
 /// `hostPath:boxPath[:ro|rw]`
@@ -92,15 +120,30 @@ pub fn build(
         volumes,
         disk_size_gb: Some(flags.disk_size_gb.unwrap_or(DISK_SIZE_GB)),
         working_dir: Some("/workspace".to_string()),
-        cmd: Some(flags.cmd.clone()),
-        // Mandatory. The SDK default (false) stops the box when the creating
-        // runtime drops, so exiting `cbox up` would destroy it.
-        detach: true,
-        // Must be false alongside detach: BoxOptions::sanitize() in the SDK
-        // rejects auto_remove=true with detach=true outright ("Detached boxes
-        // should use auto_remove=false for manual lifecycle control"). A
-        // dropped runtime no longer stops the box, so removal happens only on
-        // an explicit `cbox down`.
+        // Never `flags.cmd` -- see `KEEP_ALIVE_CMD`'s doc comment for why the
+        // init process and the user's command must never be the same thing.
+        // What the user asked to run is launched separately, over a
+        // TTY-backed exec, by `attach::attach(&litebox, &flags.cmd)`.
+        cmd: Some(KEEP_ALIVE_CMD.iter().map(|s| s.to_string()).collect()),
+        // Matches `boxlite run -it` with no `-d`, which is what the pre-cbox
+        // justfile actually passed (verified against commit 27f4a74, the
+        // last version of the justfile's `up` recipe before cbox replaced
+        // it: `boxlite --home "$home" run -it --name "$name" ...` -- no
+        // `--detach` anywhere). So by default the box does not outlive this
+        // process: closing the terminal lets boxlite's own watchdog stop the
+        // VM, exactly like `just up` always worked. `--detach`/`-d` on `up`
+        // flips this for anyone who wants the box to stay up so `cbox exec`
+        // can reach it after this session ends.
+        detach: flags.detach,
+        // Always false, on both branches:
+        //  - detach: true -> BoxOptions::sanitize() rejects auto_remove:
+        //    true alongside it outright ("Detached boxes should use
+        //    auto_remove=false for manual lifecycle control").
+        //  - detach: false -> this is what preserves the box (rootfs disk
+        //    and DB record) across the watchdog stopping it, so a later
+        //    `cbox up` can reuse and restart it instead of hitting a name
+        //    collision. `cbox down` remains the only thing that removes a
+        //    box either way.
         auto_remove: false,
         ..Default::default()
     })
@@ -118,6 +161,7 @@ mod tests {
             cmd: vec!["claude".into()],
             invocation_dir: PathBuf::from("/tmp/project"),
             disk_size_gb: None,
+            detach: false,
         }
     }
 
@@ -171,20 +215,56 @@ mod tests {
     }
 
     #[test]
-    fn detach_is_always_true() {
-        // The SDK default is false, which would destroy the box when cbox up
-        // exits. This is the single most important line in the file.
-        let opts = build(&flags(), vec![], vec![]).unwrap();
-        assert!(opts.detach, "detach must be true or exiting cbox up kills the box");
+    fn detach_follows_the_flag() {
+        let mut f = flags();
+        f.detach = false;
+        assert!(!build(&f, vec![], vec![]).unwrap().detach);
+
+        f.detach = true;
+        assert!(build(&f, vec![], vec![]).unwrap().detach);
     }
 
     #[test]
-    fn the_command_is_set_explicitly() {
-        // The image sets no ENTRYPOINT/CMD, so it inherits node:26's `node`,
-        // which exits immediately without a TTY and takes the box with it.
-        let opts = build(&flags(), vec![], vec![]).unwrap();
-        assert_eq!(opts.cmd, Some(vec!["claude".to_string()]));
+    fn auto_remove_is_always_false_regardless_of_detach() {
+        // detach: true -> the SDK's own sanitize() rejects auto_remove: true
+        // alongside it. detach: false -> false is what preserves the box
+        // across the watchdog stopping it, so a later `cbox up` can reuse
+        // it. Either way this must never be true.
+        for detach in [false, true] {
+            let mut f = flags();
+            f.detach = detach;
+            let opts = build(&f, vec![], vec![]).unwrap();
+            assert!(!opts.auto_remove, "auto_remove must be false (detach={detach})");
+        }
+    }
+
+    #[test]
+    fn the_init_command_is_the_keep_alive_process_never_the_users_command() {
+        // This *is* the bug: BoxOptions has no TTY field, so if the init
+        // process were the user's command it would run with no TTY, exit
+        // immediately, and tear the whole PID namespace down with it --
+        // taking the real, TTY-backed attach exec down too. The init
+        // command must be a fixed keep-alive, decoupled from whatever the
+        // user asked to run.
+        let f = flags();
+        assert_eq!(f.cmd, vec!["claude".to_string()], "sanity: flags() carries a user command");
+
+        let opts = build(&f, vec![], vec![]).unwrap();
+        assert_eq!(opts.cmd, Some(vec!["sleep".to_string(), "infinity".to_string()]));
+        assert_ne!(opts.cmd, Some(f.cmd), "the init command must never equal the user's command");
         assert_eq!(opts.working_dir, Some("/workspace".to_string()));
+    }
+
+    #[test]
+    fn the_init_command_does_not_track_whatever_the_user_asks_to_run() {
+        let mut f = flags();
+        f.cmd = vec!["bash".into(), "-lc".into(), "echo hi".into()];
+        let opts = build(&f, vec![], vec![]).unwrap();
+        assert_eq!(
+            opts.cmd,
+            Some(vec!["sleep".to_string(), "infinity".to_string()]),
+            "the init command is fixed no matter what -- cmd requests"
+        );
     }
 
     #[test]
