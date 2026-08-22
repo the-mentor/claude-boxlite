@@ -20,7 +20,13 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "cbox", about = "Drive BoxLite micro-VMs for this repo")]
+#[command(
+    name = "cbox",
+    about = "Drive BoxLite micro-VMs for this repo",
+    // `version` with no value takes CARGO_PKG_VERSION, so `-V` tracks
+    // Cargo.toml automatically rather than needing a hand-edited string.
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
