@@ -10,6 +10,7 @@ mod proto;
 mod secrets;
 mod server;
 mod sidecar;
+mod stdin_reader;
 #[cfg(test)]
 mod test_env_lock;
 mod terminal_guard;

@@ -11,7 +11,6 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use boxlite::{BoxCommand, LiteBox};
 use futures::{Stream, StreamExt};
-use tokio::io::AsyncReadExt as _;
 
 /// Default `TERM` when the invoking shell doesn't set one. Shared with
 /// `client.rs` (which sends it in the `Exec` frame) and `commands/up.rs`
@@ -76,8 +75,11 @@ async fn pump(
 ) -> Result<i32> {
     let mut sigwinch =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())?;
-    let mut stdin = tokio::io::stdin();
-    let mut buf = [0u8; 4096];
+    // Not `tokio::io::stdin()` -- see `stdin_reader` for why: that handle's
+    // read cannot be cancelled, and this loop exits promptly on the guest's
+    // stdout EOF without ever cancelling the read it's racing against,
+    // which otherwise hangs process shutdown until a stray keypress.
+    let mut stdin = crate::stdin_reader::StdinReader::spawn();
 
     // Only the guest-exited path (`out_stream` returning `None`) may call
     // `exec.wait()` below. Boxes are created with `detach: true` precisely so
@@ -119,13 +121,13 @@ async fn pump(
                 }
                 None => { end_reason = EndReason::GuestExited; break; }
             },
-            read = stdin.read(&mut buf) => {
-                let n = read?;
-                if n == 0 {
+            chunk = stdin.read() => {
+                let chunk = chunk?;
+                if chunk.is_empty() {
                     end_reason = EndReason::LocalStdinClosed;
                     break;
                 }
-                if stdin_writer.write(&buf[..n]).await.is_err() {
+                if stdin_writer.write(&chunk).await.is_err() {
                     end_reason = EndReason::StdinWriteFailed;
                     break;
                 }
