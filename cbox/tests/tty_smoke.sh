@@ -85,6 +85,7 @@ rm -rf "$home"
 mkdir -p "$home"
 up_typescript=$(mktemp)
 exec_typescript=$(mktemp)
+zero_exit_typescript=$(mktemp)
 shim_pid=""
 up_pid=""
 
@@ -108,7 +109,7 @@ cleanup() {
             kill -9 "$pid" 2>/dev/null
         fi
     done
-    rm -rf "$home" "$up_typescript" "$exec_typescript"
+    rm -rf "$home" "$up_typescript" "$exec_typescript" "$zero_exit_typescript"
 }
 trap cleanup EXIT INT TERM
 
@@ -148,6 +149,28 @@ if stty -g >/dev/null 2>&1; then
     stty_after=$(stty -g)
 fi
 
+# A gap this smoke test itself had until now: every check above uses a
+# nonzero exit code (7), which `commands/exec.rs` has always routed through
+# an explicit `std::process::exit` -- bypassing, by accident of this test's
+# own choice of exit code, the hang this repo hit live: `tokio::io::stdin()`
+# backs its reads with an uncancellable blocking `read(2)` on tokio's own
+# blocking-thread pool (tokio's own docs on `stdin()` say so verbatim), so
+# any return through `#[tokio::main]` that goes by way of a *zero* exit
+# code -- which `up` always did, and `exec` did too whenever the guest
+# happened to exit 0 -- hung the whole process until a stray keypress
+# finally satisfied that read. Fixed at the root in `stdin_reader.rs` (a
+# dedicated, genuinely cancel-safe reader thread, replacing
+# `tokio::io::stdin()` in both `attach.rs` and `client.rs`), but a fix at
+# the root is exactly the kind of thing worth pinning here: this check
+# would have hung indefinitely against the old code, with no keypress ever
+# coming from an automated run.
+echo "tty_smoke: running cbox exec -- sh -c 'printf READY0; exit 0' (must return without a keypress)"
+zero_exit_start=$(date +%s)
+BOXLITE_HOME="$home" script -q "$zero_exit_typescript" \
+    "$cbox_bin" exec -- sh -c 'printf READY0; exit 0'
+zero_exit_status=$?
+zero_exit_elapsed=$(($(date +%s) - zero_exit_start))
+
 failures=0
 
 if grep -q "READY" "$exec_typescript"; then
@@ -161,6 +184,26 @@ if [ "$exec_status" -eq 7 ]; then
     echo "tty_smoke: PASS - exit code 7 propagated through cbox exec"
 else
     echo "tty_smoke: FAIL - expected exit code 7, got $exec_status (this is the exact shape Critical 1 was: a failed/signal-derived session truncating to 0)"
+    failures=$((failures + 1))
+fi
+
+# The check that actually would have caught the runtime-shutdown hang: it
+# only reaches this line at all if the *previous* `script -q ... cbox
+# exec ...` line above already returned on its own -- a hang there blocks
+# the whole script before this point is ever reached. The elapsed-time
+# assertion below is the belt-and-suspenders part: a generous bound, well
+# above any real box-boot time, that would only be exceeded by something
+# waiting on a keypress that an automated run never sends.
+if [ "$zero_exit_status" -eq 0 ] && grep -q "READY0" "$zero_exit_typescript"; then
+    echo "tty_smoke: PASS - a zero-exit-code session round-tripped stdout and returned control"
+else
+    echo "tty_smoke: FAIL - zero-exit-code session misbehaved (status=$zero_exit_status) -- see $zero_exit_typescript"
+    failures=$((failures + 1))
+fi
+if [ "$zero_exit_elapsed" -le 30 ]; then
+    echo "tty_smoke: PASS - returned in ${zero_exit_elapsed}s with no keypress (the tokio::io::stdin() shutdown hang would not have returned at all)"
+else
+    echo "tty_smoke: FAIL - took ${zero_exit_elapsed}s to return -- suspiciously long for a session with no work left to do"
     failures=$((failures + 1))
 fi
 
