@@ -32,17 +32,26 @@ just install/uninstall  # symlink the cb wrapper onto PATH (see below)
 `up`/`up-dev` take an optional box name (default: derived from the enclosing git repo's
 root directory, falling back to the cwd's name outside a repo; pin one explicitly with
 `CBOX_NAME` or a positional argument) and flags: `-f`/`--force`
-(replace an existing box of the same name), `-c`/`--cwd` (mount host cwd onto `/workspace`),
-`-v host:box` (mount an arbitrary host folder, repeatable), `-e KEY=VALUE` (inject an extra
-environment variable into the box, repeatable; `cbox` merges these with its built-in
-passthrough list — `passthrough_vars()` in `cbox/src/env.rs`, not a justfile variable — with
-the `-e` value winning on a key collision), `-i`/`--image` (override the image path passed to
-`boxlite run`; defaults to `custom_tag`, i.e. `claude-boxlite-custom`), `--disk-size <GB>`
-(container rootfs disk size; defaults to 10GB, headroom for in-box `docker pull`/`apt
-install`/`npm install`/build caches), and `-- <cmd>` (override the executable
-launched in the box; defaults to `claude`, e.g. `just up -- bash`). `exec` takes the same optional box name and `-- <cmd>`
+(remove and recreate an existing box of the same name from scratch, discarding its
+credentials/mounts/disk-size along with everything else it accumulated), `-c`/`--cwd` (mount
+host cwd onto `/workspace`), `-v host:box` (mount an arbitrary host folder, repeatable), `-e
+KEY=VALUE` (inject an extra environment variable into the box, repeatable; `cbox` merges these
+with its built-in passthrough list — `passthrough_vars()` in `cbox/src/env.rs`, not a justfile
+variable — with the `-e` value winning on a key collision), `-i`/`--image` (override the image
+path passed to `boxlite run`; defaults to `custom_tag`, i.e. `claude-boxlite-custom`),
+`--disk-size <GB>` (container rootfs disk size; defaults to 10GB, headroom for in-box `docker
+pull`/`apt install`/`npm install`/build caches), `-d`/`--detach` (let the box outlive this
+session so `cbox exec` can reach it later; without it, the default, closing the terminal stops
+the VM — the disk and box record survive, and running `cbox up` again resumes it, a real
+restart rather than a suspend), and `-- <cmd>` (override the executable launched in the box;
+defaults to `claude`, e.g. `just up -- bash`). Without `-f`, running `up` again against a name
+that already exists **resumes** that box (starting it if it's `Stopped`) rather than erroring
+— but its configuration dates from when it was first created, credentials included, so `cbox up`
+says so and names any secret whose value has since changed; `-f` is how to pick up today's
+settings. `exec` takes the same optional box name and `-- <cmd>`
 override (e.g. `just exec -- bash`) to exec something other than `claude --continue` (its
-default) in the running box.
+default) in the running box; against a `Stopped` box it says so and starts it (a ~2s cold boot)
+before attaching, rather than either failing or doing that silently.
 
 `build`, `build-image`, and `build-base` are variadic: everything after the recipe name is
 forwarded verbatim to `docker build`, and `build`/`build-image` also pass it down to the

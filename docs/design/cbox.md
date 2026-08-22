@@ -161,31 +161,127 @@ simply no longer the default.
 
 ## Lifecycle and process model
 
-### Detach is mandatory
+### Two launches, one bug: the init process is never the interactive one
 
-**Read from source.** `BoxOptions::detach` defaults to false, and its documentation says the
-box "stops when the runtime that created it is dropped." Under that default, exiting `cbox up`
-would destroy the box — a regression against today's behavior, where `just down` exists
-precisely because the box outlives `just up`.
+**Verified, live, with a marker-log test.** Phase 1's first `up` implementation put the user's
+command (e.g. `claude`) directly into `BoxOptions.cmd`, making it the box's init process, and
+then separately started a *second*, TTY-backed exec of the same command via
+`attach::attach`. `BoxOptions` has no field to request a TTY at all — a pty is allocated only
+per-`Exec` RPC — so the init process can never be the interactive one, whatever it's asked to
+run. Launched with no TTY, it exited almost immediately (~27ms, measured), and because it's
+PID 1, its exit tore down the whole container PID namespace, killing the second, real exec
+with it: `Container init process exited... incompatible container status: Stopped`. `-- bash`
+happened to survive this by accident — a non-interactive shell with an open-but-non-tty stdin
+blocks on read instead of hitting EOF — which is why it looked fine under casual testing while
+`claude` did not.
 
-cbox therefore sets **`detach: true`** and **`auto_remove: false`**.
+The fix: `BoxOptions.cmd` is always a fixed keep-alive (`sleep infinity`, verified present in
+this repo's built image — see `boxopts::KEEP_ALIVE_CMD`'s doc comment), decoupled entirely from
+whatever the user asked to run. `attach::attach` is the only thing that ever launches the
+user's command, over the one and only TTY-backed exec.
 
-**Verified, and a correction.** An earlier draft of this document claimed `auto_remove: true`
-was "correct and harmless" alongside `detach: true`, reasoning that a dropped runtime no longer
-stops the box so removal would only happen on an explicit `cbox down`. That was read from field
-documentation and never exercised. The SDK rejects the combination outright — `BoxOptions::
-sanitize()` at `boxlite-0.9.7/src/runtime/options.rs:516` returns a config error: "auto_remove=
-true is incompatible with detach=true. Detached boxes should use auto_remove=false for manual
-lifecycle control." With the pairing the original text prescribed, *every* `cbox up` fails at
-creation.
+### Detach defaults to false, matching what the justfile always did
 
-`auto_remove: false` is what the SDK prescribes and it preserves the intended behavior anyway:
-the box is kept after stop, and `cbox down` removes it explicitly, which is exactly today's
-`stop` + `rm`. The lesson worth keeping is the one the tagging convention exists for — a
-**read from source** claim is not a verified one, and this is the item that proved it.
+**Verified, and a correction of this document's own earlier claim.** An earlier version of
+this section asserted `detach: true` was mandatory, reasoning that the pre-cbox justfile let a
+box outlive `just up`, and that `boxlite`'s own default of `detach: false` would be a
+regression against that. Checked against the actual justfile history (commit `27f4a74`, the
+last version of the `up` recipe before cbox replaced it): it ran `boxlite --home "$home" run
+-it --name "$name" ...` — no `--detach`, no `-d`, anywhere. The justfile never asked for a
+detached box; it asked for exactly what `boxlite run -it` gives by default, which is a box
+that stops when its creating process dies. The earlier claim was read from a general
+description of `detach`'s semantics, not checked against what this repo's own justfile
+actually invoked — the same class of mistake the tagging convention exists to catch, just
+missed once.
 
-The consequence to accept: a crashed or SIGKILL'd `cbox up` leaves a box running with no
-owner. That is already true today, and `cbox list -a` plus `cbox down` remain the recovery.
+cbox now matches the justfile's real, historical behavior: **`detach: false` by default**.
+Closing the terminal (or losing it to a crash or SIGKILL) lets boxlite's own watchdog pipe
+stop the VM — a kernel-level POLLHUP when this process's fds close, not something cbox
+intercepts or arranges. The disk (qcow2 rootfs) and the box's DB record both survive a stop;
+only the running VM goes away. `--detach`/`-d` on `up` opts into the old phase-1 behavior for
+anyone who wants the box to outlive the session so `cbox exec` can reach it later without a
+`cbox up` first.
+
+**`auto_remove: false` always**, regardless of `detach`. With `detach: true`, `BoxOptions::
+sanitize()` at `boxlite-0.9.7/src/runtime/options.rs:516` rejects `auto_remove: true` outright
+("Detached boxes should use auto_remove=false for manual lifecycle control") — this part of
+the earlier analysis was correct and is unchanged. With `detach: false`, `auto_remove: false`
+is now what *preserves* the box across the watchdog stopping it, so a later `cbox up` can
+resume it instead of hitting a name collision. `cbox down` remains the only thing that removes
+a box either way.
+
+### `cbox up` resumes a stopped box instead of erroring on it
+
+With `detach: false` the default, "run `cbox up`, close the terminal, run `cbox up` again" is
+the normal shape of a session, not an edge case — and the second `cbox up` now finds a box
+already sitting there, `Stopped`. `runtime.get_or_create` (rather than `create`) is what makes
+that resume instead of fail: it returns the existing box unchanged when the name collides, and
+`start()` on a `Stopped` box is documented as an ordinary restart (reusing the rootfs,
+reconnecting), not a fresh boot from nothing — cold, in the sense of a new kernel and guest
+agent coming up again (~2.2s for `guest_connect` alone, measured), but not a *recreate*. `-f`/
+`--force` keeps meaning what it always meant: remove and recreate from scratch, discarding
+whatever the box had accumulated.
+
+**This is a restart, never a suspend/resume.** BoxLite 0.9.7 has no guest-memory
+snapshot/restore and no libkrun pause-and-resume FFI; `stop()` then `start()` boots a new
+kernel and a new guest agent from the preserved disk. Nothing in cbox should ever describe
+this as "resuming a paused VM" — it resumes the *box* (its disk and identity), not a live
+process.
+
+**Reuse is not free of a real hazard, and it must not be silent.** `get_or_create`'s own doc
+says the quiet part outright: "When an existing box is returned, the provided `options` are
+ignored (no config drift validation)." A reused box keeps whatever credentials, mounts, and
+disk size it had when first created — so a rotated GitHub token, for instance, does not reach
+a resumed box until `-f` recreates it. cbox now says so on every reuse (which settings are
+stale, and that `-f` is the fix), and specifically detects a *changed* secret: a hash of each
+secret's value (never the value) is stored in the per-box `cbox.json` sidecar at creation, and
+compared on reuse. A mismatch on a secret present in both old and new (i.e. rotated, not merely
+added or dropped) prints a named warning — a warning, not a refusal, because most reuses won't
+have rotated anything and refusing would force a full recreate onto every session regardless
+of whether the rotated secret is even one this invocation uses. `std::collections::
+hash_map::DefaultHasher` (SipHash) is what backs the hash: this is same-machine drift
+detection, not a security boundary, so a non-cryptographic hash already in `std` is adequate,
+and the failure mode of its algorithm ever changing across a std/toolchain upgrade is a
+harmless spurious "run -f" prompt, never a missed warning.
+
+### `cbox exec` against a stopped box
+
+Under phase 1's `detach: true`-always model, `cbox exec` hitting a `Stopped` box was rare —
+mostly the double-launch race above. With `detach: false` the default, it is now the ordinary
+case right after a session ends. boxlite's own `exec()` already restarts a `Stopped` box
+implicitly (its doc on `start()`: "Also called implicitly by exec() if the box is not
+running") — but doing that with no explanation turns a real, ~2.2s cold boot into what looks
+like a hung terminal. `cbox exec` now checks the box's status first and, if it isn't `Running`,
+says so and starts it explicitly before attaching — same outcome boxlite would produce anyway,
+but disclosed rather than silent. Refusing outright and requiring `cbox up` first was rejected:
+it would just push the same wait onto an extra command with no benefit, since boxlite is going
+to do the restart either way.
+
+The consequence still worth naming: a crashed or SIGKILL'd `cbox up` with `--detach` set can
+leave a box running with no owner. `cbox list -a` plus `cbox down` remain the recovery, same as
+phase 1 described.
+
+### The interactive pump loop's other bug: a hang after the guest exits
+
+**Verified against `tokio` 1.53.1 (`Cargo.lock`'s pin), and live under a real pty.** Both
+`attach::attach`'s pump loop and `client.rs`'s socket-proxy loop used `tokio::io::stdin()` to
+read local keystrokes. Tokio's own source for that handle says outright: it's backed by an
+ordinary blocking `read(2)` on a dedicated thread that "is impossible to cancel," and warns
+that this "can make shutdown of the runtime hang until the user presses enter" — recommending,
+verbatim, a thread dedicated to blocking stdin IO instead. That is the exact shape of the bug
+this project's own `up`/`exec` hit: the pump loop exits promptly on the guest's stdout EOF
+without ever cancelling the racing stdin read (it can't), so `#[tokio::main]` dropping its
+`Runtime` at the end of `main` then blocks — for every session, not only failures — until a
+stray keypress finally completes that read. Fixed by replacing `tokio::io::stdin()` with
+`stdin_reader::StdinReader`: a plain `std::thread` (not one of tokio's own blocking-pool
+threads, which is exactly what `Runtime::drop` waits on) doing the same blocking read tokio's
+own docs recommend. Because Rust terminates every thread unconditionally on process exit, this
+thread needs no cancellation at all — it's simply abandoned along with the rest of the process.
+Verified live: `cbox up`/`cbox exec` now return within the box's own boot/shutdown time, with
+no keypress, in both the direct-exec and control-socket-proxy paths; `cbox/tests/tty_smoke.sh`
+pins a same-shape regression check (a zero-exit-code session, since a nonzero one already
+happened to route around the bug via an unrelated `std::process::exit` call in
+`commands/exec.rs`).
 
 ### `up` serves `exec`
 
@@ -404,8 +500,9 @@ at once. **The ports policy in `agentgateway.md` stays exactly as load-bearing a
 and `--allow-net` must not be described as having relaxed it.
 
 **Observability.** `cbox logs [-f] [-n]`, `list -a`, `inspect`, `stats [-s]`. These close a
-real gap created by `detach: true`: a box that fails to start otherwise leaves no output and
-no way to see it, and stopped boxes are invisible without `-a`.
+real gap that gets wider the longer a box sits `Stopped` between sessions (the default now):
+a box that fails to start leaves no output and no way to see it, and stopped boxes are
+invisible without `-a`.
 
 **Resource limits.** `--cpus`, `--memory`, `-u/--user` map directly onto `BoxOptions`.
 

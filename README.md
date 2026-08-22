@@ -138,16 +138,25 @@ Code points at the host gateway in any project — including a mounted host dire
 
 `up`, `up-dev`, `shell`, and `down` take an optional box name (default: derived from the
 enclosing git repo's root directory, falling back to the cwd's name; pin one with `CBOX_NAME`), so you
-can run several boxes side by side. `up`/`up-dev` also accept `-f`/`--force` to replace an
-existing box of the same name (without it, a name collision errors out):
+can run several boxes side by side. `up`/`up-dev` also accept `-f`/`--force` to replace an existing box of the same name with a
+fresh one (without it, a name collision resumes the existing box instead — see below):
 
 ```bash
 just up-dev my-box     # build + boot a box named "my-box"
-just up my-box -f      # re-boot it, replacing the running box
+just up my-box -f      # re-boot it from scratch, replacing whatever was there
 just up --cwd          # boot with the host current directory mounted at /workspace
 just shell my-box      # open a session in it
 just down my-box       # tear it down
 ```
+
+Closing the terminal (or losing it to a crash) stops the box rather than removing it — the
+disk and box record survive, and running `just up` again against the same name resumes it
+(cold-booting the VM again, not a suspend/resume) instead of erroring on the collision. That
+resumed box keeps the credentials, mounts, and disk size it had when first created, so `cbox`
+warns on resume and specifically calls out any secret whose value has changed since (e.g. a
+rotated token) — `-f` is how to pick up today's settings instead. Pass `-d`/`--detach` to keep
+the old always-running behavior, so the box stays up and `just exec`/`just shell` can reach it
+without a `just up` first.
 
 `up`/`up-dev` also accept `-c`/`--cwd` (mount the host current directory onto `/workspace`),
 `-v host:box` (mount an arbitrary host folder, repeatable), `-e KEY=VALUE` (inject an
