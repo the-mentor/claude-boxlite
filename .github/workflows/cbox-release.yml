@@ -1,0 +1,51 @@
+name: cbox release
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*.*.*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: cbox-linux-x86_64
+          - os: macos-14
+            asset: cbox-macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install protoc (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Update Rust toolchain
+        run: |
+          rustup update stable
+          rustup default stable
+
+      - name: Run cbox test suite
+        working-directory: cbox
+        run: cargo test --release
+
+      - name: Build cbox
+        working-directory: cbox
+        run: cargo build --release
+
+      - name: Rename binary to its asset name
+        run: cp cbox/target/release/cbox ${{ matrix.asset }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
