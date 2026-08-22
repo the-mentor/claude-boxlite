@@ -181,6 +181,39 @@ build *args: (build-image args)
 build-cbox:
     cd cbox && cargo build --release
 
+# Fetch a prebuilt cbox binary from a GitHub Release instead of compiling it
+# locally. Defaults to the rolling release built from the latest `dev` push
+# (v<cbox/Cargo.toml version>-dev); pass an explicit tag (e.g. v0.1.0) to pin
+# a numbered release instead. Writes to the same path build-cbox does, so
+# up/exec/down/list need no changes either way.
+# Usage: just install-cbox [tag]
+install-cbox tag="":
+    #!/usr/bin/env sh
+    set -eu
+    repo="the-mentor/claude-boxlite"
+    tag="{{tag}}"
+    if [ -z "$tag" ]; then
+      version="$(sed -n 's/^version = "\(.*\)"/\1/p' "{{justfile_directory()}}/cbox/Cargo.toml" | head -1)"
+      tag="v${version}-dev"
+    fi
+
+    case "$(uname -s)-$(uname -m)" in
+      Linux-x86_64) asset="cbox-linux-x86_64" ;;
+      Darwin-arm64) asset="cbox-macos-arm64" ;;
+      *) echo "install-cbox: no prebuilt binary for $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+    esac
+
+    out="{{justfile_directory()}}/cbox/target/release/cbox"
+    mkdir -p "$(dirname "$out")"
+    tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' EXIT
+    url="https://github.com/${repo}/releases/download/${tag}/${asset}"
+    echo "Fetching ${asset} from release ${tag}..." >&2
+    curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp" "$url"
+    chmod +x "$tmp"
+    mv "$tmp" "$out"
+    echo "Installed ${out} (${tag})" >&2
+
 # Refresh the custom image and sweep orphaned image blobs from boxlite's cache.
 # BoxLite caches image tags immutably and has no `rmi`, so a rebuilt :latest is
 # ignored until its cached tag->digest row is dropped; then the next
