@@ -79,6 +79,10 @@ jobs:
         id: version
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' cbox/Cargo.toml | head -1)
+          if [ -z "$version" ]; then
+            echo "::error::could not parse version from cbox/Cargo.toml"
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Publish dev rolling release
