@@ -82,11 +82,14 @@ async fn pump(
     let mut stdin = crate::stdin_reader::StdinReader::spawn();
 
     // Only the guest-exited path (`out_stream` returning `None`) may call
-    // `exec.wait()` below. Boxes are created with `detach: true` precisely so
-    // they survive their terminal going away, so if the loop instead ends
-    // because local stdin closed (or a write to the guest's stdin failed),
-    // the guest may still be running — waiting on it here could hang this
-    // command forever.
+    // `exec.wait()` below. Every other way out of the loop leaves the guest's
+    // own state unknown: local stdin closing (or a write to the guest's stdin
+    // failing) says nothing about whether the guest is still running, so
+    // waiting on it here could hang this command indefinitely. That holds
+    // whichever way `detach` went -- a detached box outlives this terminal by
+    // design, and even a non-detached one is only stopped by boxlite's
+    // watchdog once *this process* dies, which is necessarily after this
+    // wait would have already blocked.
     //
     // This is *not* the same treatment `server.rs`'s `client_gone` flag gets,
     // despite the similar-looking split: `server.rs` kills the guest exec
