@@ -5,6 +5,9 @@ on:
     branches: ["**"]
     tags: ["v*.*.*"]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     strategy:
@@ -20,10 +23,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      # boxlite's build.rs compiles boxlite-shared, which requires protoc >= 3.12
       - name: Install protoc (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
+      # boxlite's build.rs compiles boxlite-shared, which requires protoc >= 3.12
       - name: Install protoc (macOS)
         if: runner.os == 'macOS'
         run: brew install protobuf
@@ -57,7 +62,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: cbox-dev-release
+      group: cbox-release
       cancel-in-progress: false
     steps:
       - name: Checkout
@@ -88,6 +93,9 @@ jobs:
       - name: Publish dev rolling release
         if: github.ref == 'refs/heads/dev'
         env:
+          # Using the default GITHUB_TOKEN (not a PAT) is load-bearing: GitHub suppresses
+          # workflow runs triggered by refs it creates, which is what stops this from
+          # re-triggering the workflow it creates a tag in.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="v${{ steps.version.outputs.version }}-dev"

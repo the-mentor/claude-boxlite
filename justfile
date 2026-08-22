@@ -205,7 +205,7 @@ install-cbox tag="":
 
     out="{{justfile_directory()}}/cbox/target/release/cbox"
     mkdir -p "$(dirname "$out")"
-    tmp="$(mktemp)"
+    tmp="$(mktemp "${out}.XXXXXX")"
     trap 'rm -f "$tmp"' EXIT
     url="https://github.com/${repo}/releases/download/${tag}/${asset}"
     echo "Fetching ${asset} from release ${tag}..." >&2
@@ -267,7 +267,7 @@ cbox_bin := justfile_directory() + "/cbox/target/release/cbox"
 up *args:
     #!/usr/bin/env sh
     set -eu
-    [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' first" >&2; exit 1; }
+    [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' or 'just install-cbox' first" >&2; exit 1; }
     # First-run bootstrap. This lived in the old `up` recipe; it has to stay
     # here rather than move into cbox, because cbox's cwd is now the user's
     # directory and it has no other way to find the repo's tracked template.
@@ -285,7 +285,7 @@ alias shell := exec
 exec *args:
     #!/usr/bin/env sh
     set -eu
-    [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' first" >&2; exit 1; }
+    [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' or 'just install-cbox' first" >&2; exit 1; }
     cd "{{invocation_directory()}}"
     exec "{{cbox_bin}}" exec {{args}}
 
@@ -294,7 +294,7 @@ exec *args:
 down *args:
     #!/usr/bin/env sh
     set -eu
-    [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' first" >&2; exit 1; }
+    [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' or 'just install-cbox' first" >&2; exit 1; }
     cd "{{invocation_directory()}}"
     exec "{{cbox_bin}}" down {{args}}
 
@@ -303,6 +303,6 @@ down *args:
 list *args:
     #!/usr/bin/env sh
     set -eu
-    [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' first" >&2; exit 1; }
+    [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' or 'just install-cbox' first" >&2; exit 1; }
     cd "{{invocation_directory()}}"
     exec "{{cbox_bin}}" list {{args}}

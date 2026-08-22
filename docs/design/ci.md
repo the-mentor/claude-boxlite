@@ -30,6 +30,11 @@ Two targets, matching GitHub-hosted runners with zero extra cross-compile setup:
 Linux arm64 and Intel macOS are out of scope for this iteration — add them later as more matrix
 rows if needed; nothing below depends on there being exactly two.
 
+The Linux binary is dynamically linked against whatever glibc `ubuntu-latest` ships at build time
+(currently Ubuntu 24.04 → glibc 2.39); it is not guaranteed to run on older distros (Ubuntu 22.04,
+Debian 12, etc.), and this floor rises silently whenever GitHub repoints `ubuntu-latest`. Pin to a
+specific older runner (e.g. `ubuntu-22.04`) in a future iteration if a lower floor is needed.
+
 ## Workflow: `.github/workflows/cbox-release.yml`
 
 Two jobs.
@@ -136,7 +141,7 @@ A new justfile recipe, additive alongside the existing `build-cbox`:
 - `curl -fsSL "https://github.com/the-mentor/claude-boxlite/releases/download/<tag>/<asset>" -o
   cbox/target/release/cbox && chmod +x cbox/target/release/cbox`. The repo is public, so this
   needs no auth token.
-- Writes to the exact path `cbox_bin` (`justfile:224`) already expects — `up`/`exec`/`down`/
+- Writes to the exact path `cbox_bin` (`justfile:257`) already expects — `up`/`exec`/`down`/
   `list` need no changes to consume a binary fetched this way instead of compiled locally.
 
 `build-cbox` is untouched: it still runs `cd cbox && cargo build --release` for anyone actively
