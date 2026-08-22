@@ -1,0 +1,15 @@
+[package]
+name = "cbox"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.23"
+boxlite = "=0.9.7"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }

@@ -24,18 +24,23 @@ broker Anthropic traffic — with an API key it holds the key host-side so the V
   `registries.json` template the first time you run `just up`/`up-dev`, so it's safe to add
   authenticated registries (e.g. ECR via `just registry-login`, see below) locally without
   ever touching the tracked file.
-- **Credentials.** Secrets are read from a gitignored `.env` and passed to the box at run
-  time via env-var injection (BoxLite's official credential mechanism) — never baked into
-  an image. A known set of vars is forwarded when set (see `passthrough_vars` in the
-  `justfile`): Claude auth is not a flat list but one mutually exclusive set picked by
-  `llm_vars` based on what `.env` contains — subscription, direct API key, or gateway-keyed
-  API key (see **The host-side gateway** below for exactly which vars each set includes),
-  plus `ANTHROPIC_MODEL` always optional on top — GitHub (`GH_TOKEN`/`GITHUB_TOKEN`), and git
-  identity (`GIT_AUTHOR_*` / `GIT_COMMITTER_*`). Unset vars are skipped.
+- **Credentials.** Secrets are read from a gitignored `.env` and never baked into an image.
+  They reach the box two different ways, and the difference matters. Most are **forwarded** as
+  ordinary environment variables when set: Claude auth is one mutually exclusive set chosen by
+  what `.env` contains — subscription, direct API key, or gateway-keyed API key (see **The
+  host-side gateway** below for which vars each set includes) — plus `ANTHROPIC_MODEL`
+  optionally on top, and git identity (`GIT_AUTHOR_*` / `GIT_COMMITTER_*`). Unset vars are
+  skipped. GitHub credentials are **not** forwarded: `GH_TOKEN`/`GITHUB_TOKEN` become
+  BoxLite *secrets*, so the box sees only a placeholder and a host-side proxy substitutes the
+  real value into GitHub-bound HTTPS. Both paths are implemented by `cbox` (see
+  `docs/design/cbox.md`), which the `justfile` recipes forward to.
 - **GitHub.** Setting `GH_TOKEN` (or `GITHUB_TOKEN`) authenticates the `gh` CLI
-  automatically; git is preconfigured to use gh's credential helper, so `git clone`/`push`
-  over HTTPS work too. Commit identity comes from the `GIT_AUTHOR_*` / `GIT_COMMITTER_*`
-  vars.
+  automatically, and `git clone`/`push` over HTTPS work too — but not via gh's credential
+  helper, which the box no longer uses. Git authenticates through an `http.extraHeader`
+  carrying a placeholder that the host-side proxy substitutes, because git builds Basic auth
+  itself and base64-encoding would hide a placeholder from the proxy. `docs/design/cbox.md`
+  explains why that forces two separate secrets. Commit identity still comes from the
+  `GIT_AUTHOR_*` / `GIT_COMMITTER_*` vars.
 
 ## Prerequisites
 
@@ -67,7 +72,9 @@ cp .env.example .env
 #                 ANTHROPIC_BASE_URL=http://host.boxlite.internal:15002/api
 #                 and ANTHROPIC_AUTH_TOKEN=unused (value unchecked; the gateway
 #                 attaches the real key, so it never enters the box)
-# Optional GitHub: set GH_TOKEN=... (a PAT) — used by the box AND the gateway's github MCP target
+# Optional GitHub: set GH_TOKEN=... (a PAT) — substituted into the box's GitHub traffic
+#                  host-side (the box only ever holds a placeholder), and used directly by
+#                  the gateway's github MCP target
 # Optional git identity: GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL
 ```
 
@@ -129,7 +136,8 @@ either.
 The `agentgateway` MCP server is configured user-scoped in `/root/.claude.json`, so Claude
 Code points at the host gateway in any project — including a mounted host directory.
 
-`up`, `up-dev`, `shell`, and `down` take an optional box name (default `claude-box`), so you
+`up`, `up-dev`, `shell`, and `down` take an optional box name (default: derived from the
+enclosing git repo's root directory, falling back to the cwd's name; pin one with `CBOX_NAME`), so you
 can run several boxes side by side. `up`/`up-dev` also accept `-f`/`--force` to replace an
 existing box of the same name (without it, a name collision errors out):
 
@@ -193,8 +201,8 @@ credential, not all of them:
 
 | Credential | Reaches the box? | Why |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | No, when `ANTHROPIC_BASE_URL` points at the gateway's `/api` route | the box never calls Anthropic directly in that mode — the gateway does it on the box's behalf, so the key has no reason to be there. With no `ANTHROPIC_BASE_URL` set at all, `llm_vars` forwards this key straight into the box instead — the gateway isn't in the loop, so this guarantee only applies to gateway-keyed mode |
-| `GH_TOKEN` / `GITHUB_TOKEN` | Yes | the box runs `gh` and `git push` itself, and no proxy can do that for it |
+| `ANTHROPIC_API_KEY` | No, when `ANTHROPIC_BASE_URL` points at the gateway's `/api` route | the box never calls Anthropic directly in that mode — the gateway does it on the box's behalf, so the key has no reason to be there. With no `ANTHROPIC_BASE_URL` set at all, `cbox`'s `env::llm_passthrough()` forwards this key straight into the box instead — the gateway isn't in the loop, so this guarantee only applies to gateway-keyed mode |
+| `GH_TOKEN` / `GITHUB_TOKEN` | No | the box holds only a placeholder (`<BOXLITE_SECRET:gh>`); a host-side proxy substitutes the real token into requests to `github.com`/`api.github.com`, so `gh`, `git clone`, and `git push` all authenticate without the value ever entering the VM. See `docs/design/cbox.md` |
 
 **Troubleshooting**
 
@@ -203,7 +211,7 @@ credential, not all of them:
 | `/mcp` connects but lists no tools | `GH_TOKEN` unset or expired — the `github-mcp` container's GitHub API calls 401, visible in `just gateway-logs` |
 | 401 from Anthropic | your `ANTHROPIC_BASE_URL` path and your credential disagree: `/claude` needs the OAuth token, `/api` needs the gateway to have `ANTHROPIC_API_KEY` |
 | 401 in subscription mode with the right path | `ANTHROPIC_AUTH_TOKEN` is set and shadowing the OAuth token — unset it |
-| 400 `Extra inputs are not permitted` | beta headers the backend rejects; set `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` and add it to `passthrough_vars` |
+| 400 `Extra inputs are not permitted` | beta headers the backend rejects; set `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` and pass it with `-e`, or add it to `UNCONDITIONAL_PASSTHROUGH` in `cbox/src/env.rs` |
 | Box can't reach Anthropic at all | the gateway isn't running — `just gateway-up` |
 
 ### Admin UI
