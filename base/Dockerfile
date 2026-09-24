@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
 # Run as a generic non-root user, with passwordless sudo for apt installs and
 # the like. The node image's own uid-1000 user is renamed rather than adding a
 # second one. BoxLite honours USER for both the init process and exec sessions,
-# but doesn't derive HOME from /etc/passwd, so it's set explicitly.
+# and derives HOME (/home/sandbox-user) from /etc/passwd.
 RUN usermod -l sandbox-user -d /home/sandbox-user -m node \
     && groupmod -n sandbox-user node \
     && echo 'sandbox-user ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/sandbox-user \
@@ -44,5 +44,4 @@ RUN usermod -l sandbox-user -d /home/sandbox-user -m node \
     && install -d -o sandbox-user -g sandbox-user /workspace
 
 USER sandbox-user
-ENV HOME=/home/sandbox-user
 WORKDIR /workspace
