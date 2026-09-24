@@ -16,7 +16,7 @@ runtime, the CLIs — are slow to build and rarely need to change, while the cus
 where per-repo configuration lives and gets rebuilt often. Keeping them separate means a config
 tweak (a new plugin, a `claude.json` change) rebuilds only the fast layer.
 
-The custom layer bakes `custom/claude.json` in as `/root/.claude.json` — the theme, the
+The custom layer bakes `custom/claude.json` in as `/home/sandbox-user/.claude.json` — the theme, the
 onboarding-complete flag, and the user-scoped `agentgateway` MCP server entry — and installs
 whatever plugin marketplaces and plugins are listed in its `MARKETPLACES`/`PLUGINS` build args.
 Nothing is baked into `/workspace` itself, which is a deliberate choice: it means mounting a

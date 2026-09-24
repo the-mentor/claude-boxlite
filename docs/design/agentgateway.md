@@ -29,7 +29,7 @@ not one gateway with three binds — a name collision between a gateway and a to
 (`mcp:`, `ui:`) is why they're `mcp-gateway`/`llm-gateway`/`ui-gateway` rather than
 `mcp`/`llm`/`ui`.
 
-The box's baked MCP config (`/root/.claude.json`, built into the custom image) points at
+The box's baked MCP config (`/home/sandbox-user/.claude.json`, built into the custom image) points at
 `http://host.boxlite.internal:15003/mcp` and needs no change regardless of what else happens
 here — that URL is a promise this config keeps, not a value read from it.
 
