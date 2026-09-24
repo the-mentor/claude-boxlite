@@ -6,7 +6,7 @@
 # See docs/design/agentgateway.md and the admin UI ports entry below.
 services:
   agentgateway:
-    image: cr.agentgateway.dev/agentgateway:v1.4.1
+    image: cr.agentgateway.dev/agentgateway:v1.5.0
     container_name: agentgateway
     command: ["-f", "/config.yaml"]
     ports:
