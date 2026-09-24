@@ -78,6 +78,8 @@ enum Commands {
     /// Open a session in a running box.
     Exec {
         name: Option<String>,
+        #[arg(long)]
+        config: Option<PathBuf>,
         #[arg(last = true)]
         cmd: Vec<String>,
     },
@@ -110,7 +112,7 @@ async fn main() -> Result<()> {
             })
             .await?;
         }
-        Commands::Exec { name, cmd } => commands::exec::run(name, cmd).await?,
+        Commands::Exec { name, config, cmd } => commands::exec::run(name, cmd, config).await?,
         Commands::Down { name } => commands::down::run(name).await?,
         Commands::List { all } => commands::list::run(all).await?,
     }
