@@ -10,7 +10,7 @@
 # references only — never paste a literal credential here. Tracked in git.
 #
 # Design and rationale: docs/design/agentgateway.md. Schema pinned at
-# https://raw.githubusercontent.com/agentgateway/agentgateway/v1.4.1/schema/config.json
+# https://raw.githubusercontent.com/agentgateway/agentgateway/v1.5.0/schema/config.json
 
 gateways:
   mcp-gateway:
@@ -108,6 +108,16 @@ mcp:
     #   mcp:
     #     host: http://host.docker.internal:8000/mcp
 
+# UI-only stub: serves no model. The admin UI shows its LLM sidebar section
+# (Logs, Analytics, Costs, ...) only when a top-level `llm:` block exists —
+# it ignores the ai backends under `routes:` below. Side effect: :15002 also
+# answers /v1/models (empty list) and /v1/messages (404 model_not_found).
+# `gateways` is required — omitted, this opens its own listener on :4000.
+# See docs/design/agentgateway.md.
+llm:
+  gateways: llm-gateway
+  models: []
+
 # LLM routes. See docs/design/agentgateway.md for the credential-asymmetry
 # design and why it's enforced only by justfile's `llm_vars`, not the schema.
 routes:
@@ -186,8 +196,8 @@ config:
     database:
       # Non-postgres:// value = SQLite; sqlx creates the file but not the
       # parent dir, so docker-compose.yml mounts a writable volume here.
-      # Also captures full raw prompt/completion text — see the
-      # frontendPolicies.accessLog warning below.
+      # Prompt/completion text is NOT stored unless
+      # frontendPolicies.accessLog.database.llm below is set to full.
       url: /var/lib/agentgateway/requests.db
 
   modelCatalog:
@@ -197,23 +207,16 @@ config:
     # adding that id to model-costs.json (mounted :ro in docker-compose.yml).
     - file: /etc/agentgateway/model-costs.json
 
-# WARNING: full raw prompt/completion text, ALWAYS ON, cannot be gated at runtime
-# — see docs/design/agentgateway.md. Different from config.logging.database
-# above (that's tokens/cost/duration); this writes the actual request/response
-# body — secrets, proprietary code, everything — into the same requests.db row.
+# What LLM detail goes into requests.db — see docs/design/agentgateway.md.
+# metadata: tokens/cost/timing only, no conversation content. full: also the
+# raw prompt/completion text (secrets, proprietary code, everything), which
+# the admin UI's conversation/trajectory views need. Flip to full here and
+# restart to opt in.
 #
-# No env-var toggle works: agentgateway v1.4.1 statically scans this CEL
-# expression's syntax tree for `llm.prompt`/`llm.completion` tokens
-# (cel/mod.rs's attributes_for()) rather than evaluating it, so merely
-# referencing them here — guarded or not — turns on capture gateway-wide.
-# (A real toggle, `logging.database.llm`, exists upstream post-1.4.1.)
-# Deleting this whole `add:` block is the only way to disable it.
-#
-# has(llm.*) guards MCP traffic (no llm context) from erroring — accessLog
-# has no per-route scoping, so this applies gateway-wide either way.
+# Do NOT add an `add:` field referencing llm.prompt/llm.completion (the
+# 1.4.1-era way to capture content): that field is written to requests.db
+# regardless of the llm mode, silently defeating metadata.
 frontendPolicies:
   accessLog:
     database:
-      add:
-        prompt: "has(llm.prompt) ? string(llm.prompt) : ''"
-        completion: "has(llm.completion) ? string(llm.completion) : ''"
+      llm: metadata

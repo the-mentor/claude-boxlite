@@ -7,7 +7,7 @@ who did what or when, only what the config is and why it has to be that way.
 
 ## Shape
 
-agentgateway (`cr.agentgateway.dev/agentgateway`, pinned at `v1.4.1`) runs as a long-lived
+agentgateway (`cr.agentgateway.dev/agentgateway`, pinned at `v1.5.0`) runs as a long-lived
 Docker Compose service on the host, alongside two sibling containers:
 
 - **`mcp-gateway`** (port 15003) — serves `/mcp` and `/sse`, multiplexing MCP tool targets.
@@ -16,7 +16,7 @@ Docker Compose service on the host, alongside two sibling containers:
 - **`llm-gateway`** (port 15002) — two Anthropic-Messages-API routes, `/claude` (subscription
   passthrough) and `/api` (keyed), described below.
 - **`ui-gateway`** (port 15000) — the admin UI: config viewer, MCP tool playground, and (at
-  `v1.4.1`) Logs, Analytics, Costs, Models, Providers, Guardrails, Keys, and Policies pages —
+  `v1.5.0`) Logs, Analytics, Costs, Models, Providers, Guardrails, Keys, and Policies pages —
   behind HTTP basic auth.
 - **`github-mcp`** — GitHub's official MCP server image, run as a sibling compose service
   with no published host port, reachable only from `agentgateway` over the compose network.
@@ -106,6 +106,18 @@ The admin UI (port 15000) is different: same full UI (Shape above lists its page
 `basicAuth` with `mode: strict` (see below) — safe to publish even though every box can reach
 it; a box without the password just gets a 401.
 
+**The empty `llm:` block exists only for the UI sidebar.** The UI decides whether to show
+its LLM nav section with `Boolean(config.llm)` (`ui/src/components/Shell.tsx`, the same in
+v1.4.1 and v1.5.0). It doesn't look at `routes[].backends[].ai`, so without a top-level
+`llm:` block, Logs/Analytics/Costs/etc. collapse into a "Get started" link. The pages still
+load from their URLs, because the router registers them unconditionally. `llm: {gateways:
+llm-gateway, models: []}` flips the check while serving no model. It adds two endpoints to
+`:15002` that every box can reach: `/v1/models` (empty list) and `/v1/messages` (404
+`model_not_found`). Neither can reach an upstream. `gateways` must be set; with it omitted
+the block binds its own listener on port 4000 (unpublished in compose, but pointless). Pages
+like Models, Keys, and Playground show up too, and don't match how this config routes. The
+`/api` and `/claude` routes are unaffected.
+
 The lesson generalizes: before adding or uncommenting a port in `docker-compose.yml`, ask
 whether the thing behind it authenticates its own requests. Binding `127.0.0.1` answers "is
 this reachable from the LAN," not "is this reachable from a box."
@@ -179,8 +191,8 @@ Four independent pieces: `config.tracing`, `config.logging.database`, and
 configured here). Before this block was added, the admin UI's Logs/Analytics/Costs pages
 existed but sat visibly empty — this split explains why.
 
-**Traces are export-only.** The v1.4.1 admin UI has no traces page (no `Traces.tsx`, no trace
-API under `ui/src/api/`), so `config.tracing` only controls *export*: OTLP/gRPC to
+**Traces are export-only.** The admin UI has no traces page at v1.4.1 or v1.5.0 (no `Traces.tsx`,
+no trace API under `ui/src/api/`; v1.5.0's "trajectory" view reads the request-log DB, not spans), so `config.tracing` only controls *export*: OTLP/gRPC to
 `jaeger:4317` (the new `jaeger` sibling, see Shape above), viewed at its own UI on
 `127.0.0.1:16686`. `randomSampling: true` is load-bearing — Claude Code sends no incoming
 trace context, so without it agentgateway never starts a span, and the endpoint sits
@@ -207,37 +219,35 @@ outside the container can scrape them today. Publishing `:15020` is the whole fi
 Grafana view — safer than the `:15001` lesson above since it's read-only with no credentials,
 though still one more port every box can reach (see Ports above).
 
-**Prompt/completion body logging is always on, cannot be gated at runtime**
-(`frontendPolicies.accessLog.database.add` in `config.yaml`). It writes raw request/response
-text — real conversation content, secrets included — into the same `requests.db` row
-`config.logging.database` populates with tokens/cost. `accessLog` has no per-route scoping
-(`LocalFrontendPolicies` is one top-level, all-traffic block; no equivalent under
-`routes[].policies`), so the CEL expression runs for MCP traffic too; `has(llm.prompt)` guards
-that, since MCP carries no `llm` context.
+**Prompt/completion content is off by default** (`frontendPolicies.accessLog.database.llm:
+metadata` in `config.yaml`). `metadata` stores tokens/cost/timing with no payload row;
+`full` also stores the raw prompt/completion text — real conversation content, secrets
+included — which the v1.5.0 admin UI's conversation and trajectory views render. Opting in
+is flipping that one value and restarting. `accessLog` has no per-route scoping, so the
+setting is gateway-wide.
 
-An earlier revision gated this behind an `AGENTGATEWAY_LOG_PROMPTS` env var with a CEL ternary
-(`"$AGENTGATEWAY_LOG_PROMPTS" == "true" && has(llm.prompt) ? string(llm.prompt) : ''`). It
-never worked — the admin UI showed real prompt content with the var unset or `false`. Root
-cause (confirmed against the pinned `v1.4.1` tag's source, not HEAD — GitHub code search only
-covers the default branch, so use `get_file_contents` with `ref: refs/tags/v1.4.1` for claims
-like this): `crates/agentgateway/src/cel/mod.rs`'s `attributes_for()` derives an expression's
-needed attributes by statically walking its *syntax tree* for `llm.prompt`/`llm.completion`
-tokens — it never evaluates the expression, so a guard around them is invisible to it. Any CEL
-expression anywhere in `config.yaml` mentioning those tokens registers
-`Attributes::LlmPrompt`/`LlmCompletion` unconditionally at load time, flipping
-`ContextBuilder::needs_llm_prompt()`/`needs_llm_completion()` to `true` gateway-wide — which
-makes the LLM backend buffer the raw prompt/completion into `LLMInfo` regardless.
-`telemetry/log.rs` then stores `LLMInfo.prompt`/`.completion` into the log row's `payload`
-with no CEL re-check, so the ternary's runtime result never mattered. v1.4.1 has no
-config-level toggle (`DatabaseLlmMode`/`logging.database.llm` exists upstream, unreleased) —
-deleting this block and restarting is the only way to disable it. Verify with `just
-gateway-logs` or `POST /api/logs/get` (the `hasPayload` check the verification plan already
-prescribes).
+**Don't capture content through a CEL `add:` field.** That was the only mechanism on v1.4.1
+(the toggle landed in v1.5.0, upstream PR #2925), and it could not be gated: `cel/mod.rs`'s
+`attributes_for()` walks an expression's *syntax tree* for `llm.prompt`/`llm.completion`
+rather than evaluating it, so any reference — even inside a false ternary — turns on
+buffering gateway-wide. An earlier `AGENTGATEWAY_LOG_PROMPTS` env-var ternary failed exactly
+this way. On v1.5.0 an `add:` field is still stored as its own DB column regardless of the
+`llm` mode (`telemetry/log.rs`'s `database_add_can_capture_content_without_enabling_payload_storage`
+test), so adding one back silently defeats `metadata`. Verify by sending a canary string through
+`/api` and checking `requests.db`: under `metadata` the `request_log_payloads` table stays
+empty and the canary appears nowhere; under `full` it gets one row containing the canary.
+
+**Token counts include prompt-cache tokens (v1.5.0+).** `llm.inputTokens` now folds in
+cache-read and cache-creation tokens, so input counts in the UI, spans, and `requests.db`
+jumped sharply for Claude Code (which caches heavily) versus v1.4.1 rows — cost is unchanged.
+The provider's raw figures are in `llm.providerInputTokens`/`llm.providerTotalTokens`.
+`AGENTGATEWAY_LEGACY_LLM_USAGE_TOKEN_SEMANTICS=true` restores the old behavior but is slated
+for removal after 1.5, so it's deliberately not set.
 
 **Don't use the UI's "Refresh base costs" button.** Since `modelCatalog` has a configured
 `File` source (`ui.rs:637-645`), the button takes the branch at `ui.rs:676-678` that sets
 `base_costs_file` to that same path — not the `config.yaml`-persist branch, which only runs
-with no `File` source. It calls `refresh_models_dev_base_catalog` (`llm/cost/refresh.rs:20-33`)
+with no `File` source. It calls `refresh_models_dev_base_catalog` (`llm/cost/refresh.rs:20-33` at v1.4.1; `llm/catalog/refresh.rs` from v1.5.0)
 to fetch `models.dev`'s catalog live, then tries to write it onto
 `/etc/agentgateway/model-costs.json` — which fails since that mount is `:ro`, so nothing's
 overwritten, but the unwanted live fetch still happens. No reason to click it when the catalog
@@ -247,7 +257,8 @@ is already declared in `config.yaml`.
 
 These were non-obvious enough, and costly enough to re-derive, that they're worth stating
 plainly. All checked against the schema pinned to the `v1.4.1` image tag
-(`https://raw.githubusercontent.com/agentgateway/agentgateway/v1.4.1/schema/config.json`):
+(`https://raw.githubusercontent.com/agentgateway/agentgateway/v1.4.1/schema/config.json`),
+and re-checked on the bump to `v1.5.0` (none of the properties this config uses were removed):
 
 - `AnthropicProvider` accepts only `model` (`additionalProperties: false`) — there is no
   `baseUrl` on the provider itself, which is why the upstream override for `/api` lives on
