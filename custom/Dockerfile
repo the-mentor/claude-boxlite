@@ -1,17 +1,20 @@
 FROM claude-boxlite-base
 
+# The base image ends as USER sandbox-user; package installs need root.
+USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends awscli \
+    && apt-get install -y --no-install-recommends awscli build-essential pkg-config golang-go protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
+USER sandbox-user
 
 # Mark first-run onboarding complete so the interactive TUI uses
 # CLAUDE_CODE_OAUTH_TOKEN instead of prompting to pick a login method.
-COPY claude.json /root/.claude.json
+COPY --chown=sandbox-user:sandbox-user claude.json /home/sandbox-user/.claude.json
 
 # statusLine is read from ~/.claude/settings.json, NOT ~/.claude.json — putting it
 # in claude.json is silently ignored. Copied before the plugin install below, which
 # merges enabledPlugins/extraKnownMarketplaces into this same file.
-COPY settings.json /root/.claude/settings.json
+COPY --chown=sandbox-user:sandbox-user settings.json /home/sandbox-user/.claude/settings.json
 
 # Marketplaces (comma-separated GitHub repos) and plugins (comma-separated
 # plugin@marketplace ids) to bake in. Append to add more, or override at build:
@@ -23,6 +26,9 @@ RUN set -eu; IFS=,; \
     for p in $PLUGINS; do claude plugin install --scope user "$p"; done
 
 # copy oh-my-posh statusline config
-COPY mojada-claude.omp.json /root/mojada-claude.omp.json
+COPY --chown=sandbox-user:sandbox-user mojada-claude.omp.json /home/sandbox-user/mojada-claude.omp.json
+
+# install rust for development (into ~/.cargo of sandbox-user)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh && sh /tmp/rustup.sh -y --profile minimal && rm /tmp/rustup.sh
 
 WORKDIR /workspace

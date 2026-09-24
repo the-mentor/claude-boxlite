@@ -7,7 +7,7 @@ import json, os
 key = os.environ.get('ANTHROPIC_API_KEY', '')
 if key:
     suffix = key[-20:]
-    cfg = '/root/.claude.json'
+    cfg = os.path.expanduser('~/.claude.json')
     with open(cfg) as f:
         c = json.load(f)
     r = c.setdefault('customApiKeyResponses', {})

@@ -101,7 +101,7 @@ still attached and, for whatever reason, its control socket didn't come up).
   `cbox/src/env.rs`, not a justfile variable) and `cbox/src/secrets.rs`, documented in
   `docs/design/cbox.md`.
 - **Host-side gateway.** `agentgateway/docker-compose.yml` runs `agentgateway` itself — serving
-  MCP on `:15003` (what the box's baked `/root/.claude.json` points at) and two Anthropic routes
+  MCP on `:15003` (what the box's baked `/home/sandbox-user/.claude.json` points at) and two Anthropic routes
   on `:15002` — plus a sibling `github-mcp` container with no published host port, and an admin
   UI on `:15000`. Both the credential model (which vars reach the box vs. the gateway, and
   which of the two Anthropic routes is keyed vs. passthrough) and the port model (every

@@ -1,7 +1,8 @@
 FROM node:26-trixie-slim
+
 RUN apt update \
     && apt upgrade -y \
-    && apt install -y --no-install-recommends git curl wget ca-certificates python3 python3-pip just unzip jq bash-completion lazygit \
+    && apt install -y --no-install-recommends sudo git curl wget ca-certificates python3 python3-pip just unzip jq bash-completion lazygit file \
     && rm -rf /var/lib/apt/lists/*
 
 # /etc/profile.d hooks (incl. bash-completion's) only run for login shells;
@@ -32,4 +33,16 @@ RUN mv /usr/local/bin/claude /usr/local/bin/claude-real \
 ARG UV_VERSION=0.12.3
 RUN pip install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
 
+# Run as a generic non-root user, with passwordless sudo for apt installs and
+# the like. The node image's own uid-1000 user is renamed rather than adding a
+# second one. BoxLite honours USER for both the init process and exec sessions,
+# but doesn't derive HOME from /etc/passwd, so it's set explicitly.
+RUN usermod -l sandbox-user -d /home/sandbox-user -m node \
+    && groupmod -n sandbox-user node \
+    && echo 'sandbox-user ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/sandbox-user \
+    && chmod 0440 /etc/sudoers.d/sandbox-user \
+    && install -d -o sandbox-user -g sandbox-user /workspace
+
+USER sandbox-user
+ENV HOME=/home/sandbox-user
 WORKDIR /workspace
