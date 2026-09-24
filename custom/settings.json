@@ -3,5 +3,19 @@
     "type": "command",
     "command": "oh-my-posh claude --config $HOME/mojada-claude.omp.json",
     "padding": 0
+  },
+  "hooks": {
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "iterm2-notify waiting" }] }
+    ],
+    "Notification": [
+      { "hooks": [{ "type": "command", "command": "iterm2-notify attention" }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "iterm2-notify clear" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "iterm2-notify clear" }] }
+    ]
   }
 }
