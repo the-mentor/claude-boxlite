@@ -19,6 +19,7 @@ just up                # boot the box without rebuilding (images and the cbox bi
 just build              # start the local registry, build base + custom images, push custom
 just build --no-cache   # same, bypassing the Docker layer cache (see below)
 just build-cbox          # build the cbox binary (cbox/target/release/cbox); up/exec/down/list all hard-fail without it
+just install-cbox [tag]  # fetch a prebuilt cbox binary from a GitHub Release instead of compiling it locally
 just exec               # open a session in the running box (alias: just shell)
 just list               # list running boxes across every box name (see below), forwarding args to cbox's own `list` command
 just down               # stop and remove the box
