@@ -3,7 +3,7 @@ FROM claude-boxlite-base
 # The base image ends as USER sandbox-user; package installs need root.
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends awscli build-essential pkg-config golang-go protobuf-compiler \
+    && apt-get install -y --no-install-recommends awscli \
     && rm -rf /var/lib/apt/lists/*
 USER sandbox-user
 
@@ -27,8 +27,5 @@ RUN set -eu; IFS=,; \
 
 # copy oh-my-posh statusline config
 COPY --chown=sandbox-user:sandbox-user mojada-claude.omp.json /home/sandbox-user/mojada-claude.omp.json
-
-# install rust for development (into ~/.cargo of sandbox-user)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh && sh /tmp/rustup.sh -y --profile minimal && rm /tmp/rustup.sh
 
 WORKDIR /workspace

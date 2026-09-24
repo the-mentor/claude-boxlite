@@ -1,8 +1,7 @@
 FROM node:26-trixie-slim
-
 RUN apt update \
     && apt upgrade -y \
-    && apt install -y --no-install-recommends sudo git curl wget ca-certificates python3 python3-pip just unzip jq bash-completion lazygit file \
+    && apt install -y --no-install-recommends sudo git curl wget ca-certificates python3 python3-pip just unzip jq bash-completion lazygit \
     && rm -rf /var/lib/apt/lists/*
 
 # /etc/profile.d hooks (incl. bash-completion's) only run for login shells;
