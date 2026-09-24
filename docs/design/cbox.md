@@ -15,6 +15,18 @@ Claims are tagged **verified** (measured against `boxlite 0.9.7`, the CLI, or a 
 **read from source** (asserted by the crate's own code but not exercised), or **open**. The
 split is load-bearing: two of the open items can still change the design.
 
+**The crate is now pinned at `boxlite 0.10.4`.** The measurements above were taken at 0.9.7.
+The upgrade was checked against the 0.10.4 source rather than re-measured. Three things
+matter to cbox. First, `auto_remove` is deprecated in favor of `auto_delete`, and cbox sets
+`auto_delete: Some(0)` explicitly, because `None` falls back to `auto_remove`, which
+defaults to `true`. Second, the SQLite schema goes from v8 to v10, and the migration is
+one-way: once a 0.10.4 `cbox` has opened a box home, a 0.9.x binary (including an old
+`boxlite` CLI) refuses it. Third, `allow_net` now also filters `host.boxlite.internal`, so
+if phase 2 adds `--allow-net`, the gateway ports must be allowlisted explicitly. The reason
+for the upgrade is security: GHSA-c7v3-78jq-x45m (in 0.9.7 the secret-substitution proxy
+forwarded to whatever IP the guest chose; 0.10.3+ dials by hostname) and a macOS OCI-layer
+escape outside the rootfs (#1393, fixed in 0.10.1).
+
 **Where the evidence lives.** Every **verified** claim below states its measurement inline, so
 this document stands on its own. The measurements were originally taken by two throwaway
 spikes — a Python one and a Rust port of it — which answered their questions and were then
@@ -202,10 +214,10 @@ only the running VM goes away. `--detach`/`-d` on `up` opts into the old phase-1
 anyone who wants the box to outlive the session so `cbox exec` can reach it later without a
 `cbox up` first.
 
-**`auto_remove: false` always**, regardless of `detach`. With `detach: true`, `BoxOptions::
-sanitize()` at `boxlite-0.9.7/src/runtime/options.rs:516` rejects `auto_remove: true` outright
-("Detached boxes should use auto_remove=false for manual lifecycle control") — this part of
-the earlier analysis was correct and is unchanged. With `detach: false`, `auto_remove: false`
+**`auto_delete: Some(0)` always**, regardless of `detach`. With `detach: true`, `BoxOptions::
+sanitize()` (`boxlite-0.10.4/src/runtime/options.rs:579`) rejects remove-on-stop outright
+("Detached boxes should use auto_delete=0 ... for manual lifecycle control") — this part of
+the earlier analysis was correct and is unchanged. With `detach: false`, `auto_delete: Some(0)`
 is now what *preserves* the box across the watchdog stopping it, so a later `cbox up` can
 resume it instead of hitting a name collision. `cbox down` remains the only thing that removes
 a box either way.
@@ -222,7 +234,7 @@ agent coming up again (~2.2s for `guest_connect` alone, measured), but not a *re
 `--force` keeps meaning what it always meant: remove and recreate from scratch, discarding
 whatever the box had accumulated.
 
-**This is a restart, never a suspend/resume.** BoxLite 0.9.7 has no guest-memory
+**This is a restart, never a suspend/resume.** BoxLite (0.9.7 through 0.10.4) has no guest-memory
 snapshot/restore and no libkrun pause-and-resume FFI; `stop()` then `start()` boots a new
 kernel and a new guest agent from the preserved disk. Nothing in cbox should ever describe
 this as "resuming a paused VM" — it resumes the *box* (its disk and identity), not a live

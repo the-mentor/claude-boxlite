@@ -46,7 +46,7 @@ broker Anthropic traffic — with an API key it holds the key host-side so the V
 
 - [`docker`](https://docs.docker.com/get-docker/) with `docker compose`
 - [`boxlite`](https://boxliteai.com) CLI — install the latest into `~/bin` with
-  `just install-boxlite`, or pin a version with `just install-boxlite v0.9.7` (see below)
+  `just install-boxlite`, or pin a version with `just install-boxlite v0.10.4` (see below)
 - [`just`](https://github.com/casey/just)
 
 ## Setup
@@ -57,7 +57,7 @@ install script), verifies its sha256 checksum, and installs into `~/bin` by defa
 
 ```bash
 just install-boxlite                    # latest release, installed to ~/bin
-just install-boxlite v0.9.7             # pin a specific version
+just install-boxlite v0.10.4             # pin a specific version
 just install-boxlite "" /usr/local/bin  # install to a different directory
 ```
 

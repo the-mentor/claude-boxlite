@@ -62,7 +62,11 @@ pub async fn run(name: Option<String>, cmd: Vec<String>) -> Result<()> {
             // instead, after saying so, rather than starting it silently or
             // refusing outright and just pushing the same wait onto a
             // required `cbox up` first.
-            let status = litebox.info().status;
+            let status = litebox
+                .info()
+                .await
+                .with_context(|| format!("failed to read {}'s status", resolved.name))?
+                .status;
             if status != BoxStatus::Running {
                 eprintln!(
                     "cbox: {} is {status}; starting it (cold boot, not a resume -- ~2s)...",

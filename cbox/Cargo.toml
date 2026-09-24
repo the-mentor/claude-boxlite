@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 base64 = "0.23"
-boxlite = "=0.9.7"
+boxlite = "=0.10.4"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 futures = "0.3"
