@@ -21,7 +21,11 @@ fn exit_status(code: i32) -> i32 {
     if code < 0 { 1 } else { code }
 }
 
-pub async fn run(name: Option<String>, cmd: Vec<String>) -> Result<()> {
+pub async fn run(
+    name: Option<String>,
+    cmd: Vec<String>,
+    config_path: Option<std::path::PathBuf>,
+) -> Result<()> {
     let cwd = std::env::current_dir().context("cannot read current directory")?;
     let resolved = naming::resolve(name.as_deref(), &cwd);
     let home = config::box_home(&resolved.name);
@@ -40,9 +44,15 @@ pub async fn run(name: Option<String>, cmd: Vec<String>) -> Result<()> {
             Ok(())
         }
         client::Route::OwnRuntime => {
+            // Starting a non-Running box resolves its image again, so this
+            // needs the same registries `up` uses -- with none, BoxLite falls
+            // back to docker.io and a locally-pushed image fails to pull.
+            let registries = config::resolve_config_path(config_path.as_deref())
+                .map(|p| config::load_registries(&p))
+                .unwrap_or_default();
             let runtime = BoxliteRuntime::new(BoxliteOptions {
                 home_dir: home,
-                image_registries: vec![],
+                image_registries: registries,
             })
             .context("failed to open the BoxLite runtime")?;
 

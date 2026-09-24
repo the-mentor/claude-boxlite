@@ -254,7 +254,8 @@ exec *args:
     set -eu
     [ -x "{{cbox_bin}}" ] || { echo "cbox binary not found at {{cbox_bin}} - run 'just build-cbox' first" >&2; exit 1; }
     cd "{{invocation_directory()}}"
-    exec "{{cbox_bin}}" exec {{args}}
+    exec "{{cbox_bin}}" exec \
+      --config "{{justfile_directory()}}/registries.local.json" {{args}}
 
 # Stop and remove the box.
 # Usage: just down [box-name]
