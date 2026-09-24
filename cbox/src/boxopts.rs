@@ -63,6 +63,7 @@ pub fn parse_volume(s: &str) -> Result<VolumeSpec> {
                 host_path: (*host).to_string(),
                 guest_path: (*guest).to_string(),
                 read_only: false,
+                ..Default::default()
             })
         }
         [host, guest, opt] => {
@@ -81,6 +82,7 @@ pub fn parse_volume(s: &str) -> Result<VolumeSpec> {
                 host_path: (*host).to_string(),
                 guest_path: (*guest).to_string(),
                 read_only,
+                ..Default::default()
             })
         }
         _ => bail!("-v needs hostPath:boxPath[:ro|rw], got {s:?}"),
@@ -98,6 +100,7 @@ pub fn build(
             host_path: flags.invocation_dir.to_string_lossy().into_owned(),
             guest_path: "/workspace".to_string(),
             read_only: false,
+            ..Default::default()
         });
     }
     for v in &flags.volumes {
@@ -135,16 +138,18 @@ pub fn build(
         // flips this for anyone who wants the box to stay up so `cbox exec`
         // can reach it after this session ends.
         detach: flags.detach,
-        // Always false, on both branches:
-        //  - detach: true -> BoxOptions::sanitize() rejects auto_remove:
-        //    true alongside it outright ("Detached boxes should use
-        //    auto_remove=false for manual lifecycle control").
+        // Always Some(0) ("keep the box after stop"), on both branches.
+        // Set explicitly: None would fall back to the deprecated
+        // auto_remove, whose default is true.
+        //  - detach: true -> BoxOptions::sanitize() rejects remove-on-stop
+        //    alongside it outright ("Detached boxes should use
+        //    auto_delete=0 ... for manual lifecycle control").
         //  - detach: false -> this is what preserves the box (rootfs disk
         //    and DB record) across the watchdog stopping it, so a later
         //    `cbox up` can reuse and restart it instead of hitting a name
         //    collision. `cbox down` remains the only thing that removes a
         //    box either way.
-        auto_remove: false,
+        auto_delete: Some(0),
         ..Default::default()
     })
 }
@@ -225,16 +230,17 @@ mod tests {
     }
 
     #[test]
-    fn auto_remove_is_always_false_regardless_of_detach() {
-        // detach: true -> the SDK's own sanitize() rejects auto_remove: true
-        // alongside it. detach: false -> false is what preserves the box
+    fn auto_delete_is_always_zero_regardless_of_detach() {
+        // detach: true -> the SDK's own sanitize() rejects remove-on-stop
+        // alongside it. detach: false -> Some(0) is what preserves the box
         // across the watchdog stopping it, so a later `cbox up` can reuse
-        // it. Either way this must never be true.
+        // it. Must be explicit: None falls back to the deprecated
+        // auto_remove, which defaults to true.
         for detach in [false, true] {
             let mut f = flags();
             f.detach = detach;
             let opts = build(&f, vec![], vec![]).unwrap();
-            assert!(!opts.auto_remove, "auto_remove must be false (detach={detach})");
+            assert_eq!(opts.auto_delete, Some(0), "detach={detach}");
         }
     }
 
