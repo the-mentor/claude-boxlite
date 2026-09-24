@@ -106,6 +106,18 @@ The admin UI (port 15000) is different: same full UI (Shape above lists its page
 `basicAuth` with `mode: strict` (see below) — safe to publish even though every box can reach
 it; a box without the password just gets a 401.
 
+**The empty `llm:` block exists only for the UI sidebar.** The UI decides whether to show
+its LLM nav section with `Boolean(config.llm)` (`ui/src/components/Shell.tsx`, the same in
+v1.4.1 and v1.5.0). It doesn't look at `routes[].backends[].ai`, so without a top-level
+`llm:` block, Logs/Analytics/Costs/etc. collapse into a "Get started" link. The pages still
+load from their URLs, because the router registers them unconditionally. `llm: {gateways:
+llm-gateway, models: []}` flips the check while serving no model. It adds two endpoints to
+`:15002` that every box can reach: `/v1/models` (empty list) and `/v1/messages` (404
+`model_not_found`). Neither can reach an upstream. `gateways` must be set; with it omitted
+the block binds its own listener on port 4000 (unpublished in compose, but pointless). Pages
+like Models, Keys, and Playground show up too, and don't match how this config routes. The
+`/api` and `/claude` routes are unaffected.
+
 The lesson generalizes: before adding or uncommenting a port in `docker-compose.yml`, ask
 whether the thing behind it authenticates its own requests. Binding `127.0.0.1` answers "is
 this reachable from the LAN," not "is this reachable from a box."

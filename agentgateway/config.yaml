@@ -108,6 +108,16 @@ mcp:
     #   mcp:
     #     host: http://host.docker.internal:8000/mcp
 
+# UI-only stub: serves no model. The admin UI shows its LLM sidebar section
+# (Logs, Analytics, Costs, ...) only when a top-level `llm:` block exists —
+# it ignores the ai backends under `routes:` below. Side effect: :15002 also
+# answers /v1/models (empty list) and /v1/messages (404 model_not_found).
+# `gateways` is required — omitted, this opens its own listener on :4000.
+# See docs/design/agentgateway.md.
+llm:
+  gateways: llm-gateway
+  models: []
+
 # LLM routes. See docs/design/agentgateway.md for the credential-asymmetry
 # design and why it's enforced only by justfile's `llm_vars`, not the schema.
 routes:
