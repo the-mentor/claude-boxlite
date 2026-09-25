@@ -172,6 +172,24 @@ Other recipes: `just registry-up` / `just registry-down` manage the local regist
 directly; `just gateway-up` / `just gateway-down` / `just gateway-logs` manage the host-side
 agentgateway (see below); `just --list` shows everything.
 
+### iTerm2 integration
+
+When the box runs in [iTerm2](https://iterm2.com), Claude Code flags the tab whenever it is
+waiting on you. The image bakes Claude Code hooks (`custom/settings.json`) that run
+`custom/iterm2-notify.sh`:
+
+| Event | What happens in iTerm2 |
+| --- | --- |
+| Claude finishes a turn (`Stop`) | desktop notification, orange tab, "waiting for input" badge, dock bounce |
+| Claude needs permission or has sat idle (`Notification`) | orange tab, "needs attention" badge, dock bounce (Claude Code sends that desktop notification itself) |
+| You submit a prompt or a tool runs | tab color and badge cleared |
+
+This works because `cbox` forwards `TERM_PROGRAM`/`ITERM_SESSION_ID` from the host terminal,
+for both `up` and `exec`, and passes the box's terminal output through unchanged. In any other
+terminal the hooks do nothing. To see the desktop notifications, turn on iTerm2's
+*Settings → Profiles → Terminal → Notifications*. To switch the integration off for one box,
+boot it with `just up -e CLAUDE_ITERM2_INTEGRATION=0`.
+
 ### The host-side gateway
 
 `just gateway-up` runs agentgateway from `agentgateway/docker-compose.yml`. Every port it

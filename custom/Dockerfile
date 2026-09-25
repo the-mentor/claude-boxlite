@@ -5,6 +5,8 @@ USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends awscli \
     && rm -rf /var/lib/apt/lists/*
+# iTerm2 integration, wired up as hooks in settings.json below.
+COPY --chmod=0755 iterm2-notify.sh /usr/local/bin/iterm2-notify
 USER sandbox-user
 
 # Mark first-run onboarding complete so the interactive TUI uses
